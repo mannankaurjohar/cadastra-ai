@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CadastraAI — AI-Powered Urban Parcel Mapping & Cadastral Feature Extraction</title>
+  
+  <!-- Fonts & Icons -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <!-- Leaflet GIS Engine & Leaflet Draw -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  
+  <!-- Turf.js for Offline Client-side GIS Geometry Calculations -->
+  <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+  
+  <!-- Chart.js for Parcel Analytics -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  
+  <!-- CadastraAI Stylesheet -->
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+
+  <!-- Top App Header -->
+  <header class="app-header">
+    <div class="brand-container">
+      <a href="#dashboard" class="brand-logo" id="brandLogoBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+          <polyline points="2 17 12 22 22 17"></polyline>
+          <polyline points="2 12 12 17 22 12"></polyline>
+        </svg>
+        <div>
+          <span class="brand-title">CadastraAI</span>
+          <span class="brand-badge">SIH 26012</span>
+        </div>
+      </a>
+      <div class="gov-badge">
+        <span class="status-dot"></span>
+        <span>Smart India Hackathon 2024: <span class="highlight">Urban Drone Cadastre PS-26012</span></span>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <button class="btn btn-judge btn-sm" id="btnJudgeMode">
+        <i data-lucide="play-circle" style="width:16px;height:16px;"></i>
+        <span>2-MINUTE JUDGE MODE</span>
+      </button>
+      <button class="btn btn-secondary btn-sm" id="btnOpenExportModal">
+        <i data-lucide="download" style="width:16px;height:16px;"></i>
+        <span>EXPORT GIS DATA</span>
+      </button>
+      <button class="btn btn-primary btn-sm" id="btnHeaderStartDemo">
+        <i data-lucide="map" style="width:16px;height:16px;"></i>
+        <span>LIVE WORKFLOW</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Telemetry Ticker -->
+  <div class="telemetry-ticker">
+    <div class="telemetry-items">
+      <div class="telemetry-item">
+        <span class="status-dot"></span>
+        <span>AI Engine: <strong>CadastraNet-UrbSeg v2.4 (PyTorch)</strong></span>
+      </div>
+      <div class="telemetry-item">
+        <span>GSD Resolution: <strong>5.0 cm/pixel</strong></span>
+      </div>
+      <div class="telemetry-item">
+        <span>CRS: <strong>EPSG:4326 (WGS84 / UTM 43N)</strong></span>
+      </div>
+      <div class="telemetry-item">
+        <span>Photogrammetry: <strong>RTK-Fixed Mosaic (24 UAV Tiles)</strong></span>
+      </div>
+    </div>
+    <div class="telemetry-item">
+      <span class="badge-offline font-mono" style="color:#10b981;font-size:0.7rem;border:1px solid rgba(16,185,129,0.3);padding:2px 6px;border-radius:3px;">● OFFLINE DEMO READY</span>
+    </div>
+  </div>
+
+  <main class="main-wrapper">
+
+    <!-- Legal & Responsible AI Disclaimer Banner -->
+    <div class="disclaimer-banner">
+      <i data-lucide="shield-alert" style="width:20px;height:20px;flex-shrink:0;"></i>
+      <div>
+        <strong>Responsible AI Notice:</strong> CadastraAI automates preliminary feature extraction and polygon generation from UAV imagery. 
+        <strong>CadastraAI does NOT determine land ownership and does NOT claim legal cadastral authority.</strong> All generated geometries require official ground verification.
+      </div>
+    </div>
+
+    <!-- Hero / Landing Section -->
+    <section class="hero-section" id="heroSection">
+      <div class="hero-content">
+        <h1>CadastraAI</h1>
+        <div class="hero-subtitle">AI-Powered Urban Parcel Mapping & Cadastral Feature Extraction</div>
+        <p class="hero-pitch">
+          “From drone imagery to verification-ready parcel maps — automatically.”
+          Automate the difficult first stage of urban cadastral surveying: UAV imagery → Orthophoto → Multi-feature segmentation → Topological validation → Human surveyor verification.
+        </p>
+
+        <div class="hero-actions">
+          <button class="btn btn-primary" id="btnHeroStartDemo">
+            <i data-lucide="zap" style="width:18px;height:18px;"></i>
+            <span>START LIVE DEMO</span>
+          </button>
+          <button class="btn btn-secondary" id="btnHeroExploreWorkflow">
+            <i data-lucide="git-branch" style="width:18px;height:18px;"></i>
+            <span>EXPLORE WORKFLOW</span>
+          </button>
+          <button class="btn btn-judge" id="btnHeroJudgeMode">
+            <i data-lucide="award" style="width:18px;height:18px;"></i>
+            <span>2-MIN JUDGE TOUR</span>
+          </button>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-value cyan" id="heroStatParcels">87</div>
+            <div class="stat-label">Parcels Detected</div>
+            <div class="stat-badge">Demonstration Dataset</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value amber" id="heroStatBuildings">142</div>
+            <div class="stat-label">Buildings Extracted</div>
+            <div class="stat-badge">Demonstration Dataset</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="heroStatRoads">3.6 km</div>
+            <div class="stat-label">Road Network</div>
+            <div class="stat-badge">Demonstration Dataset</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value green" id="heroStatConfidence">91.4%</div>
+            <div class="stat-label">Avg. AI Confidence</div>
+            <div class="stat-badge">Demonstration Dataset</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hero Map Preview Thumbnail -->
+      <div class="hero-map-preview" id="heroMapPreviewContainer">
+        <span class="map-tag">SECTOR 4 DEMO ZONE</span>
+        <canvas id="heroMiniCanvas"></canvas>
+      </div>
+    </section>
+
+    <!-- 5-Step Process Stepper Navigation -->
+    <nav class="stepper-nav" id="stepperNav">
+      <button class="step-tab active" data-step="1" id="tabStep1">
+        <span class="step-num">01</span>
+        <div>
+          <span class="step-title">DATA</span>
+          <span class="step-desc">UAV Aerial Ingestion</span>
+        </div>
+      </button>
+      <button class="step-tab" data-step="2" id="tabStep2">
+        <span class="step-num">02</span>
+        <div>
+          <span class="step-title">ORTHOPHOTO</span>
+          <span class="step-desc">Mosaicking & Alignment</span>
+        </div>
+      </button>
+      <button class="step-tab" data-step="3" id="tabStep3">
+        <span class="step-num">03</span>
+        <div>
+          <span class="step-title">AI EXTRACTION</span>
+          <span class="step-desc">Multi-Feature Segmentation</span>
+        </div>
+      </button>
+      <button class="step-tab" data-step="4" id="tabStep4">
+        <span class="step-num">04</span>
+        <div>
+          <span class="step-title">GIS VALIDATION</span>
+          <span class="step-desc">Topology Quality Check</span>
+        </div>
+      </button>
+      <button class="step-tab" data-step="5" id="tabStep5">
+        <span class="step-num">05</span>
+        <div>
+          <span class="step-title">VERIFICATION</span>
+          <span class="step-desc">Ground Truthing Workbench</span>
+        </div>
+      </button>
+    </nav>
+
+    <!-- =========================================================================
+         STEP 1: UAV DATA INGESTION
+         ========================================================================= -->
+    <section class="step-container active" id="stepView1">
+      <div class="section-header">
+        <h2>
+          <i data-lucide="plane" style="color:var(--gis-cyan);"></i>
+          <span>Step 01: UAV Drone Imagery Ingestion</span>
+        </h2>
+        <div style="display:flex;gap:0.75rem;">
+          <button class="btn btn-primary" id="btnLoadDemoDataset">
+            <i data-lucide="database" style="width:16px;height:16px;"></i>
+            <span>LOAD DEMO DATASET</span>
+          </button>
+          <button class="btn btn-secondary" id="btnStep1Next">
+            <span>PROCEED TO ORTHOPHOTO &rarr;</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="uav-grid">
+        <div>
+          <div class="upload-dropzone" id="uavDropzone">
+            <input type="file" id="uavFileInput" multiple accept=".jpg,.jpeg,.png,.tif,.tiff" style="display:none;" />
+            <i data-lucide="upload-cloud"></i>
+            <h3 style="margin-bottom:0.4rem;color:#ffffff;">Upload UAV Drone Imagery</h3>
+            <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:1rem;">
+              Drag & drop raw aerial drone captures or click to select files
+            </p>
+            <div style="display:flex;gap:0.5rem;margin-bottom:1rem;">
+              <span class="brand-badge">JPG</span>
+              <span class="brand-badge">JPEG</span>
+              <span class="brand-badge">PNG</span>
+              <span class="brand-badge">GeoTIFF</span>
+            </div>
+            <button class="btn btn-secondary btn-sm" id="btnSelectFiles" type="button">Select Drone Files</button>
+          </div>
+
+          <div style="margin-top:1rem;background:#0b132b;border:1px solid var(--border-dark);border-radius:var(--radius-sm);padding:0.9rem;">
+            <div style="font-size:0.8rem;font-weight:700;color:var(--gis-cyan);margin-bottom:0.4rem;">
+              FLIGHT MISSION METRICS (DEMO DATA)
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.6rem;font-size:0.8rem;">
+              <div>• <strong>24</strong> UAV Images Captured</div>
+              <div>• <strong>4.8 hectares</strong> Total Coverage</div>
+              <div>• <strong>85% Forward / 80% Side</strong> Overlap</div>
+              <div>• <strong>5.0 cm/pixel</strong> Ground GSD</div>
+              <div>• <strong>120m AGL</strong> Flight Altitude</div>
+              <div>• <strong>DJI Zenmuse P1 (45MP)</strong> Full-Frame</div>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+            <h4 style="font-size:0.9rem;color:#ffffff;">Raw Drone Captures (24 Overlapping Frames)</h4>
+            <span class="stat-badge">85% overlap flight plan</span>
+          </div>
+          <div class="image-tile-grid" id="uavThumbnailGrid">
+            <!-- Dynamic drone image cards injected here -->
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========================================================================
+         STEP 2: PHOTOGRAMMETRIC ORTHOPHOTO RECONSTRUCTION
+         ========================================================================= -->
+    <section class="step-container" id="stepView2">
+      <div class="section-header">
+        <h2>
+          <i data-lucide="layers" style="color:var(--gis-cyan);"></i>
+          <span>Step 02: Photogrammetric Reconstruction & Orthophoto</span>
+        </h2>
+        <div style="display:flex;gap:0.75rem;">
+          <button class="btn btn-primary" id="btnGenerateOrtho">
+            <i data-lucide="sparkles" style="width:16px;height:16px;"></i>
+            <span>GENERATE ORTHOPHOTO</span>
+          </button>
+          <button class="btn btn-secondary" id="btnStep2Next">
+            <span>CONTINUE TO AI EXTRACTION &rarr;</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="ortho-pipeline-view">
+        <div class="pipeline-diagram">
+          <div style="font-size:0.85rem;font-weight:700;color:var(--gis-cyan);margin-bottom:1rem;">
+            PHOTOGRAMMETRIC MOSAIC PIPELINE
+          </div>
+          <div class="pipeline-step-node active" id="pnode1">
+            <div class="node-icon">01</div>
+            <div>
+              <div style="font-weight:600;font-size:0.85rem;">Input UAV Images (24 Overlapping Captures)</div>
+              <div style="font-size:0.75rem;color:var(--text-muted);">85% forward overlap, 5 cm GSD, RTK position tags</div>
+            </div>
+          </div>
+          <div class="pipeline-step-node active" id="pnode2">
+            <div class="node-icon">02</div>
+            <div>
+              <div style="font-weight:600;font-size:0.85rem;">SIFT / ORB Keypoint Feature Matching</div>
+              <div style="font-size:0.75rem;color:var(--text-muted);">48,320 matched tie-points across adjacent image pairs</div>
+            </div>
+          </div>
+          <div class="pipeline-step-node active" id="pnode3">
+            <div class="node-icon">03</div>
+            <div>
+              <div style="font-weight:600;font-size:0.85rem;">Bundle Adjustment & Image Alignment</div>
+              <div style="font-size:0.75rem;color:var(--text-muted);">Mean reprojection error: 0.42 px (Sub-pixel camera solve)</div>
+            </div>
+          </div>
+          <div class="pipeline-step-node active" id="pnode4">
+            <div class="node-icon">04</div>
+            <div>
+              <div style="font-weight:600;font-size:0.85rem;">Mosaicking & Orthorectification</div>
+              <div style="font-size:0.75rem;color:var(--text-muted);">Digital Elevation Model (DEM) terrain compensation</div>
+            </div>
+          </div>
+          <div class="pipeline-step-node active" id="pnode5" style="border-color:var(--status-verified);background:rgba(16,185,129,0.1);">
+            <div class="node-icon" style="background:var(--status-verified);color:#ffffff;">✓</div>
+            <div>
+              <div style="font-weight:700;font-size:0.85rem;color:var(--status-verified);">Seamless High-Res Orthophoto (4.8 ha)</div>
+              <div style="font-size:0.75rem;color:var(--text-muted);">Single distortion-free metric raster ready for AI inference</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="background:#0b132b;border:1px solid var(--border-dark);border-radius:var(--radius-md);padding:1.25rem;text-align:center;">
+          <h4 style="font-size:0.9rem;color:#ffffff;margin-bottom:0.75rem;">Prepared Orthomosaic Preview</h4>
+          <div style="height:320px;border-radius:var(--radius-sm);overflow:hidden;border:1px solid rgba(56,189,248,0.3);position:relative;">
+            <canvas id="step2OrthoCanvas" style="width:100%;height:100%;object-fit:cover;"></canvas>
+            <div style="position:absolute;bottom:10px;left:10px;background:rgba(11,19,43,0.85);padding:3px 8px;border-radius:3px;font-size:0.7rem;color:var(--gis-cyan);">
+              ORTHOMOSAIC RESOLUTION: 5.0 cm/px
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========================================================================
+         STEP 3: AI MULTI-FEATURE EXTRACTION & INTERACTIVE GIS MAP
+         ========================================================================= -->
+    <section class="step-container" id="stepView3">
+      <div class="section-header">
+        <h2>
+          <i data-lucide="cpu" style="color:var(--gis-cyan);"></i>
+          <span>Step 03: AI Feature Extraction & GIS Polygon Generation</span>
+        </h2>
+        <div style="display:flex;gap:0.75rem;">
+          <button class="btn btn-primary" id="btnRunAiExtraction">
+            <i data-lucide="play" style="width:16px;height:16px;"></i>
+            <span>RUN AI EXTRACTION</span>
+          </button>
+          <button class="btn btn-secondary" id="btnStep3Next">
+            <span>PROCEED TO GIS VALIDATION &rarr;</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="gis-layout">
+        <div class="gis-map-panel">
+          <!-- Floating GIS Layer Controls -->
+          <div class="map-floating-controls">
+            <div style="font-size:0.75rem;font-weight:700;color:var(--gis-cyan);margin-bottom:0.2rem;">GIS MAP LAYERS</div>
+            <label class="layer-toggle-row">
+              <input type="checkbox" id="layerToggleParcels" checked />
+              <span class="layer-color-badge color-parcel"></span>
+              <span>Parcels (87 Polygons)</span>
+            </label>
+            <label class="layer-toggle-row">
+              <input type="checkbox" id="layerToggleBuildings" checked />
+              <span class="layer-color-badge color-building"></span>
+              <span>Buildings (142 Structures)</span>
+            </label>
+            <label class="layer-toggle-row">
+              <input type="checkbox" id="layerToggleRoads" checked />
+              <span class="layer-color-badge color-road"></span>
+              <span>Roads (3.6 km Network)</span>
+            </label>
+            <label class="layer-toggle-row">
+              <input type="checkbox" id="layerToggleOrthophoto" checked />
+              <span class="layer-color-badge" style="background:#4b5563;"></span>
+              <span>Drone Orthophoto (5cm)</span>
+            </label>
+            <label class="layer-toggle-row">
+              <input type="checkbox" id="layerToggleConfidence" />
+              <span class="layer-color-badge" style="background:linear-gradient(90deg, #ef4444, #f59e0b, #10b981);"></span>
+              <span>AI Confidence Heatmap</span>
+            </label>
+            <label class="layer-toggle-row">
+              <input type="checkbox" id="layerToggleVerified" />
+              <span class="layer-color-badge color-verified"></span>
+              <span>Verification Status</span>
+            </label>
+          </div>
+
+          <!-- Quick Map Tools -->
+          <div class="map-tools-bar">
+            <button class="tool-btn" id="btnFilterLowConfidence">
+              <i data-lucide="alert-triangle" style="width:14px;height:14px;color:#fbbf24;"></i>
+              <span>SHOW LOW CONFIDENCE (&lt;70%)</span>
+            </button>
+            <button class="tool-btn" id="btnResetMapView">
+              <i data-lucide="maximize-2" style="width:14px;height:14px;"></i>
+              <span>RESET ZOOM</span>
+            </button>
+          </div>
+
+          <!-- Leaflet GIS Map Container -->
+          <div id="gisMap"></div>
+
+          <!-- AI Processing Progress Checklist Overlay -->
+          <div class="processing-overlay" id="aiProcessingOverlay" style="display:none;">
+            <div class="ai-pipeline-progress">
+              <div style="font-size:1.1rem;font-weight:700;color:#ffffff;margin-bottom:0.25rem;display:flex;align-items:center;gap:0.5rem;">
+                <i data-lucide="loader-2" class="spin" style="color:var(--gis-cyan);"></i>
+                <span>AI Cadastral Extraction Pipeline</span>
+              </div>
+              <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:1.25rem;">
+                Segmenting raw UAV orthophoto into vector GIS geometries...
+              </div>
+
+              <div class="progress-checklist-item" id="chk1"><i data-lucide="check-circle-2" style="width:16px;height:16px;"></i> Loading high-resolution 5cm orthophoto</div>
+              <div class="progress-checklist-item" id="chk2"><i data-lucide="check-circle-2" style="width:16px;height:16px;"></i> Image tiling & spatial windowing (1024x1024)</div>
+              <div class="progress-checklist-item" id="chk3"><i data-lucide="check-circle-2" style="width:16px;height:16px;"></i> Feature segmentation (CadastraNet U-Net Backbone)</div>
+              <div class="progress-checklist-item" id="chk4"><i data-lucide="check-circle-2" style="width:16px;height:16px;"></i> Parcel boundary detection & edge refinement</div>
+              <div class="progress-checklist-item" id="chk5"><i data-lucide="check-circle-2" style="width:16px;height:16px;"></i> Building extraction (YOLO-Seg v8x Footprints)</div>
+              <div class="progress-checklist-item" id="chk6"><i data-lucide="check-circle-2" style="width:16px;height:16px;"></i> Road corridor centerline & right-of-way vectorization</div>
+              <div class="progress-checklist-item" id="chk7"><i data-lucide="check-circle-2" style="width:16px;height:16px;"></i> Vectorization & Douglas-Peucker simplification</div>
+              <div class="progress-checklist-item" id="chk8"><i data-lucide="check-circle-2" style="width:16px;height:16px;"></i> Initial geometry cleanup & confidence assignment</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cadastral Inspector Sidebar -->
+        <div class="inspector-panel" id="inspectorSidebar">
+          <div>
+            <div style="font-size:0.85rem;font-weight:700;color:var(--gis-cyan);margin-bottom:0.75rem;display:flex;align-items:center;gap:0.4rem;">
+              <i data-lucide="info" style="width:16px;height:16px;"></i>
+              <span>CADASTRAL INSPECTOR</span>
+            </div>
+
+            <div class="inspector-card" id="inspectorCard">
+              <div class="inspector-header">
+                <div>
+                  <div class="parcel-title" id="inspParcelId">P-034</div>
+                  <div style="font-size:0.7rem;color:var(--text-muted);" id="inspBlock">Block C (Sector 4-C)</div>
+                </div>
+                <span class="brand-badge" id="inspStatusBadge">REQUIRES GROUND VERIFICATION</span>
+              </div>
+
+              <div class="prop-row">
+                <span class="prop-label">Calculated Area</span>
+                <span class="prop-val" id="inspArea">428.4 m²</span>
+              </div>
+              <div class="prop-row">
+                <span class="prop-label">Perimeter</span>
+                <span class="prop-val" id="inspPerimeter">91.6 m</span>
+              </div>
+              <div class="prop-row">
+                <span class="prop-label">Topology Status</span>
+                <span class="prop-val" id="inspTopology" style="color:var(--status-verified);">Valid Geometry</span>
+              </div>
+              <div class="prop-row">
+                <span class="prop-label">Buildings Contained</span>
+                <span class="prop-val" id="inspBuildings">1 Structure</span>
+              </div>
+              <div class="prop-row">
+                <span class="prop-label">Road Frontage</span>
+                <span class="prop-val">Direct Frontage (12m Road)</span>
+              </div>
+
+              <div class="confidence-bar-container">
+                <div style="display:flex;justify-content:space-between;font-size:0.75rem;">
+                  <span>AI Extraction Confidence</span>
+                  <span class="prop-val" id="inspConfidence">94.2%</span>
+                </div>
+                <div class="conf-bar-bg">
+                  <div class="conf-bar-fill conf-high" id="inspConfBar" style="width:94.2%;"></div>
+                </div>
+              </div>
+
+              <div class="prop-row" style="font-size:0.7rem;">
+                <span class="prop-label">Centroid Coordinates</span>
+                <span class="prop-val font-mono" id="inspCentroid">12.97241, 77.59542</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border-dark);border-radius:var(--radius-sm);padding:0.75rem;font-size:0.7rem;color:var(--text-muted);">
+            <div style="font-weight:600;color:#fbbf24;margin-bottom:0.2rem;">Cadastral Compliance Note:</div>
+            Ownership is NOT determined by CadastraAI. Preliminary geometry subject to surveyor ground truthing.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========================================================================
+         STEP 4: GIS QUALITY CONTROL & TOPOLOGY VALIDATION
+         ========================================================================= -->
+    <section class="step-container" id="stepView4">
+      <div class="section-header">
+        <h2>
+          <i data-lucide="check-square" style="color:var(--gis-cyan);"></i>
+          <span>Step 04: GIS Topology Validation & Automated Geometry Healing</span>
+        </h2>
+        <div style="display:flex;gap:0.75rem;">
+          <button class="btn btn-primary" id="btnRunTopologyCheck">
+            <i data-lucide="search" style="width:16px;height:16px;"></i>
+            <span>RUN TOPOLOGY CHECK</span>
+          </button>
+          <button class="btn btn-accent" id="btnAutoFixGeometries">
+            <i data-lucide="wrench" style="width:16px;height:16px;"></i>
+            <span>AUTO-FIX GEOMETRIES</span>
+          </button>
+          <button class="btn btn-secondary" id="btnStep4Next">
+            <span>PROCEED TO VERIFICATION &rarr;</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="topology-dashboard">
+        <div class="qc-card">
+          <div style="font-size:0.9rem;font-weight:700;color:var(--gis-cyan);margin-bottom:0.75rem;">
+            TOPOLOGY QUALITY MATRIX
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.6rem;margin-bottom:1rem;">
+            <div class="stat-card">
+              <div class="stat-value" id="qcTotalParcels">87</div>
+              <div class="stat-label">Total Parcels</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value green" id="qcValidParcels">82</div>
+              <div class="stat-label">Valid Polygons</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" style="color:var(--status-error);" id="qcOverlaps">3</div>
+              <div class="stat-label">Overlaps</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" style="color:var(--status-review);" id="qcGaps">2</div>
+              <div class="stat-label">Sliver Gaps</div>
+            </div>
+          </div>
+
+          <div style="font-size:0.8rem;font-weight:700;color:#ffffff;margin-bottom:0.4rem;">
+            Detected Spatial Anomalies:
+          </div>
+          <div class="issue-list" id="topologyIssueList">
+            <!-- Dynamic topology issue cards -->
+          </div>
+        </div>
+
+        <div class="gis-map-panel">
+          <div id="validationMap"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========================================================================
+         STEP 5: HUMAN GROUND VERIFICATION WORKBENCH
+         ========================================================================= -->
+    <section class="step-container" id="stepView5">
+      <div class="section-header">
+        <h2>
+          <i data-lucide="user-check" style="color:var(--gis-cyan);"></i>
+          <span>Step 05: Human Surveyor Ground Verification Workbench</span>
+        </h2>
+        <div style="display:flex;gap:0.75rem;">
+          <button class="btn btn-secondary" id="btnOpenExportFromStep5">
+            <i data-lucide="download" style="width:16px;height:16px;"></i>
+            <span>EXPORT VERIFIED GIS DATA</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="verification-workbench">
+        <div class="gis-map-panel">
+          <div class="map-floating-controls" style="top:12px;left:12px;">
+            <span style="font-size:0.75rem;font-weight:700;color:var(--gis-cyan);">VERIFICATION MODE</span>
+            <div style="font-size:0.7rem;color:var(--text-muted);">
+              Click any parcel to inspect, drag vertices to edit, or approve.
+            </div>
+          </div>
+          <div id="verificationMap"></div>
+        </div>
+
+        <div class="inspector-panel">
+          <div>
+            <div style="font-size:0.9rem;font-weight:700;color:var(--gis-cyan);margin-bottom:0.75rem;display:flex;align-items:center;gap:0.4rem;">
+              <i data-lucide="clipboard-check" style="width:16px;height:16px;"></i>
+              <span>SURVEYOR REVIEW CONSOLE</span>
+            </div>
+
+            <div class="inspector-card">
+              <div class="inspector-header">
+                <div>
+                  <div class="parcel-title" id="verifParcelId">P-018</div>
+                  <div style="font-size:0.7rem;color:var(--text-muted);" id="verifBlock">Sector 4-A</div>
+                </div>
+                <span class="brand-badge" id="verifStatusBadge" style="color:var(--status-review);border-color:rgba(245,158,11,0.4);">
+                  REQUIRES GROUND VERIFICATION
+                </span>
+              </div>
+
+              <div class="prop-row">
+                <span class="prop-label">Area</span>
+                <span class="prop-val" id="verifArea">432.0 m²</span>
+              </div>
+              <div class="prop-row">
+                <span class="prop-label">AI Confidence</span>
+                <span class="prop-val" id="verifConfidence">92.4%</span>
+              </div>
+              <div class="prop-row">
+                <span class="prop-label">Surveyor ID</span>
+                <span class="prop-val font-mono">SURV-IN-KA-0924</span>
+              </div>
+
+              <div class="verification-actions">
+                <button class="btn btn-accept btn-sm" id="btnAcceptParcel">
+                  <i data-lucide="check" style="width:14px;height:14px;"></i>
+                  <span>ACCEPT</span>
+                </button>
+                <button class="btn btn-edit btn-sm" id="btnEditParcel">
+                  <i data-lucide="edit-3" style="width:14px;height:14px;"></i>
+                  <span>EDIT</span>
+                </button>
+                <button class="btn btn-reject btn-sm" id="btnRejectParcel">
+                  <i data-lucide="x" style="width:14px;height:14px;"></i>
+                  <span>REJECT</span>
+                </button>
+              </div>
+            </div>
+
+            <div style="background:#080d1a;border:1px solid var(--border-dark);border-radius:var(--radius-sm);padding:0.75rem;font-size:0.75rem;margin-top:1rem;">
+              <div style="font-weight:700;color:#ffffff;margin-bottom:0.25rem;">Cadastral Verification Status:</div>
+              <div id="verifDisclaimerText" style="color:var(--status-verified);font-weight:600;">
+                “Ground verified — subject to official cadastral procedures.”
+              </div>
+            </div>
+          </div>
+
+          <div style="font-size:0.7rem;color:var(--text-muted);border-top:1px solid var(--border-dark);padding-top:0.75rem;">
+            Official Cadastral Authority Clause: AI boundaries are preliminary. Final cadastral record rights rest solely with the Department of Land Records.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========================================================================
+         SPECTACULAR BEFORE / AFTER COMPARISON SLIDER
+         ========================================================================= -->
+    <section class="split-viewer-section">
+      <div class="section-header">
+        <h2>
+          <i data-lucide="split" style="color:var(--gis-cyan);"></i>
+          <span>Before / After: Raw Drone Orthophoto vs. AI GIS Parcel Map</span>
+        </h2>
+        <div style="display:flex;gap:0.5rem;" id="splitLayerFilters">
+          <button class="btn btn-secondary btn-sm active" data-filter="all">All Layers</button>
+          <button class="btn btn-secondary btn-sm" data-filter="parcels">Parcels Only</button>
+          <button class="btn btn-secondary btn-sm" data-filter="buildings">Buildings</button>
+          <button class="btn btn-secondary btn-sm" data-filter="roads">Roads</button>
+        </div>
+      </div>
+
+      <div class="split-container" id="splitContainer">
+        <!-- Left Side: Original Raw Drone Imagery -->
+        <div class="split-layer" id="splitLeftLayer">
+          <canvas id="splitRawCanvas" style="width:100%;height:100%;object-fit:cover;"></canvas>
+          <div class="split-badge badge-left">ORIGINAL UAV ORTHOPHOTO (RAW)</div>
+        </div>
+
+        <!-- Right Side: AI Generated Vector GIS Map -->
+        <div class="split-layer split-right" id="splitRightLayer">
+          <canvas id="splitVectorCanvas" style="width:100%;height:100%;object-fit:cover;"></canvas>
+          <div class="split-badge badge-right">AI GENERATED PARCEL &amp; FEATURE MAP</div>
+        </div>
+
+        <!-- Draggable Divider Handle -->
+        <div class="split-handle" id="splitHandle">
+          <div class="split-handle-button">
+            <i data-lucide="move-horizontal" style="width:18px;height:18px;"></i>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========================================================================
+         PARCEL ANALYTICS SECTION
+         ========================================================================= -->
+    <section class="analytics-section">
+      <div class="section-header">
+        <h2>
+          <i data-lucide="bar-chart-3" style="color:var(--gis-cyan);"></i>
+          <span>Cadastral Analytics &amp; Dataset Summary</span>
+        </h2>
+        <span class="stat-badge">Survey Mission BLR-SEC4-2026</span>
+      </div>
+
+      <div class="charts-grid">
+        <div class="chart-card">
+          <h4><i data-lucide="pie-chart" style="width:16px;height:16px;color:var(--gis-cyan);"></i> Parcel Area Distribution (m²)</h4>
+          <div class="chart-wrapper">
+            <canvas id="chartAreaDist"></canvas>
+          </div>
+        </div>
+
+        <div class="chart-card">
+          <h4><i data-lucide="bar-chart-2" style="width:16px;height:16px;color:var(--status-verified);"></i> AI Confidence Distribution</h4>
+          <div class="chart-wrapper">
+            <canvas id="chartConfidence"></canvas>
+          </div>
+        </div>
+
+        <div class="chart-card">
+          <h4><i data-lucide="check-circle" style="width:16px;height:16px;color:#38bdf8;"></i> Verification Progress (61 / 87)</h4>
+          <div class="chart-wrapper">
+            <canvas id="chartVerification"></canvas>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========================================================================
+         GOVERNMENT WORKFLOW & POLICY ALIGNMENT
+         ========================================================================= -->
+    <div class="info-columns-grid">
+      <!-- Land Record Integration -->
+      <div class="info-card">
+        <h3 style="font-size:1.1rem;color:#ffffff;display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">
+          <i data-lucide="git-merge" style="color:var(--gis-cyan);"></i>
+          <span>Future Land-Record Integration</span>
+        </h3>
+        <p style="font-size:0.8rem;color:var(--text-muted);">
+          CadastraAI bridges the gap between raw UAV survey imagery and statutory land administration databases.
+        </p>
+
+        <div class="workflow-steps-vertical">
+          <div class="wf-step">
+            <strong>01. AI Parcel Geometry</strong> &rarr; Automated boundary extraction from 5cm GSD drone orthophoto
+          </div>
+          <div class="wf-step">
+            <strong>02. Ground Verification</strong> &rarr; Licensed cadastral surveyors review, edit and ground-truth
+          </div>
+          <div class="wf-step">
+            <strong>03. ULPIN / Bhu-Aadhaar</strong> &rarr; Unique 14-digit geo-coded parcel identifier assignment
+          </div>
+          <div class="wf-step">
+            <strong>04. Land Records Database</strong> &rarr; Seamless ingestion into state cadastral portals (e.g. Bhoomi, Dharani, Banglarbhumi)
+          </div>
+        </div>
+      </div>
+
+      <!-- Why CadastraAI & Manual Comparison -->
+      <div class="info-card">
+        <h3 style="font-size:1.1rem;color:#ffffff;display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">
+          <i data-lucide="award" style="color:var(--gis-cyan);"></i>
+          <span>Why CadastraAI? (Value Proposition)</span>
+        </h3>
+        <table class="matrix-table">
+          <thead>
+            <tr>
+              <th>Feature</th>
+              <th>Manual Cadastre</th>
+              <th>CadastraAI Engine</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Parcel Digitization</td>
+              <td>Manual (Weeks)</td>
+              <td class="cadastra-col">AI Assisted (&lt;60s)</td>
+            </tr>
+            <tr>
+              <td>Building Extraction</td>
+              <td>Manual Footprints</td>
+              <td class="cadastra-col">Automated Multi-Task</td>
+            </tr>
+            <tr>
+              <td>Road Extraction</td>
+              <td>Manual Tracing</td>
+              <td class="cadastra-col">Automated Centerlines</td>
+            </tr>
+            <tr>
+              <td>Topology Validation</td>
+              <td>Manual Inspection</td>
+              <td class="cadastra-col">Automated Shapely Auto-Fix</td>
+            </tr>
+            <tr>
+              <td>Confidence Scoring</td>
+              <td>✗ Not Available</td>
+              <td class="cadastra-col">✓ Probabilistic Tiering</td>
+            </tr>
+            <tr>
+              <td>Human Verification</td>
+              <td>✓ Required</td>
+              <td class="cadastra-col">✓ Integrated Workbench</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Final Result Summary Bar -->
+    <section style="background:linear-gradient(135deg, rgba(2,132,199,0.15), rgba(11,19,43,0.9));border:1px solid var(--gis-cyan);border-radius:var(--radius-lg);padding:2rem;margin-bottom:2rem;text-align:center;">
+      <h2 style="font-size:1.6rem;color:#ffffff;margin-bottom:0.5rem;">
+        PRELIMINARY GIS PARCEL MAP GENERATED &amp; VERIFIED
+      </h2>
+      <p style="font-size:0.9rem;color:var(--text-muted);max-width:700px;margin:0 auto 1.5rem;">
+        Ready for ground verification export and official land records cadastral workflow integration.
+      </p>
+      <div style="display:flex;justify-content:center;gap:1rem;">
+        <button class="btn btn-accent" id="btnSummaryExport">
+          <i data-lucide="download" style="width:16px;height:16px;"></i>
+          <span>EXPORT COMPLETE GIS DATASET</span>
+        </button>
+        <button class="btn btn-secondary" id="btnSummaryPrint">
+          <i data-lucide="printer" style="width:16px;height:16px;"></i>
+          <span>PRINT CADASTRAL INSPECTION REPORT</span>
+        </button>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- 2-MINUTE JUDGE MODE PRESENTATION HUD -->
+  <div class="judge-hud" id="judgeHud" style="display:none;">
+    <div style="display:flex;align-items:center;gap:0.6rem;">
+      <i data-lucide="award" style="color:var(--gis-cyan);width:20px;height:20px;"></i>
+      <span class="judge-step-indicator" id="judgeStepNum">STEP 1/10</span>
+    </div>
+    <div class="judge-caption" id="judgeCaption">
+      Problem Statement 26012: Automated Urban Parcel Extraction from Drone Imagery.
+    </div>
+    <div style="display:flex;gap:0.4rem;">
+      <button class="btn btn-secondary btn-sm" id="btnJudgePrev" title="Previous Step">&larr;</button>
+      <button class="btn btn-primary btn-sm" id="btnJudgeNext" title="Next Step">Next &rarr;</button>
+      <button class="btn btn-secondary btn-sm" id="btnJudgeClose" title="Exit Judge Mode">✕</button>
+    </div>
+  </div>
+
+  <!-- GIS EXPORT MODAL -->
+  <div class="modal-backdrop" id="exportModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 style="color:#ffffff;display:flex;align-items:center;gap:0.5rem;">
+          <i data-lucide="download-cloud" style="color:var(--gis-cyan);"></i>
+          <span>Export GIS Parcel Dataset</span>
+        </h3>
+        <button class="btn btn-secondary btn-sm" id="btnCloseExportModal">✕</button>
+      </div>
+
+      <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:1.25rem;">
+        Download industry-standard geospatial vector formats containing all 87 extracted parcels, topology validation metadata, and surveyor ground verification audit trails.
+      </p>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.5rem;">
+        <a href="/api/export/geojson" class="btn btn-primary" download="cadastra_parcels.geojson" style="padding:1rem;">
+          <i data-lucide="file-code"></i>
+          <div>
+            <div>EXPORT GEOJSON</div>
+            <div style="font-size:0.7rem;font-weight:normal;opacity:0.8;">RFC 7946 Standard Format</div>
+          </div>
+        </a>
+
+        <a href="/api/export/kml" class="btn btn-secondary" download="cadastra_parcels.kml" style="padding:1rem;">
+          <i data-lucide="globe"></i>
+          <div>
+            <div>EXPORT KML</div>
+            <div style="font-size:0.7rem;font-weight:normal;opacity:0.8;">Google Earth &amp; CAD Ready</div>
+          </div>
+        </a>
+
+        <button class="btn btn-secondary" id="btnDownloadShapefileBundle" style="padding:1rem;">
+          <i data-lucide="package"></i>
+          <div>
+            <div>SHAPEFILE / GEOPACKAGE</div>
+            <div style="font-size:0.7rem;font-weight:normal;opacity:0.8;">ESRI GIS Bundle</div>
+          </div>
+        </button>
+
+        <button class="btn btn-accent" id="btnPrintCadastralSheet" style="padding:1rem;">
+          <i data-lucide="printer"></i>
+          <div>
+            <div>PRINT CADASTRAL MAP</div>
+            <div style="font-size:0.7rem;font-weight:normal;opacity:0.8;">Official Field Sheet PDF</div>
+          </div>
+        </button>
+      </div>
+
+      <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border-dark);border-radius:var(--radius-sm);padding:0.75rem;font-size:0.7rem;color:var(--text-muted);">
+        <strong>Export Metadata:</strong> Coordinate Reference System: EPSG:4326 / UTM 43N. Includes parcel_id, area_sqm, perimeter_m, confidence, verification_status, and surveyor timestamps.
+      </div>
+    </div>
+  </div>
+
+  <!-- CadastraAI Scripts -->
+  <script src="/static/geo_data.js"></script>
+  <script src="/static/orthophoto_canvas.js"></script>
+  <script src="/static/app.js"></script>
+
+</body>
+</html>
