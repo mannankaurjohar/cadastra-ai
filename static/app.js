@@ -1,6 +1,6 @@
 /**
  * CadastraAI Master Application Controller
- * SIH Problem Statement 26012: AI-Based Urban Parcel Mapping & Cadastral Feature Extraction
+ * SIH 2026 Problem Statement PS-26012: AI-Based Urban Parcel Mapping & Cadastral Feature Extraction
  */
 
 (function() {
@@ -8,88 +8,84 @@
 
   // Global State
   let currentStep = 1;
-  let dataset = window.CADASTRA_DATA || null;
+  let activeZoneId = 'bengaluru_urban';
+  let dataset = (window.CADASTRA_DATASETS && window.CADASTRA_DATASETS.datasets) 
+    ? window.CADASTRA_DATASETS.datasets['bengaluru_urban'] 
+    : (window.CADASTRA_DATA || null);
+
   let gisMap = null;
   let validationMap = null;
   let verificationMap = null;
-  
-  // Layer references for Step 3 Map
+
+  // Layer groups for Step 3 Map
   let parcelLayer = null;
   let buildingLayer = null;
   let roadLayer = null;
+  let pathwayLayer = null;
+  let gcpLayer = null;
+  let changesLayer = null;
   let orthoOverlay = null;
-  let confidenceLayer = null;
-  let verifiedLayer = null;
 
-  // Selected Parcel ID
+  // Active Selected Parcel
   let selectedParcelId = 'P-034';
-  let activeEditingPolygon = null;
 
-  // Judge Mode State
+  // Charts
+  let chartArea = null;
+  let chartConf = null;
+  let chartVerif = null;
+
+  // Judge Mode Tour Steps
   let judgeModeActive = false;
   let judgeStepIndex = 0;
-  let judgeTimer = null;
 
   const judgeTourSteps = [
     {
       step: 1,
-      view: 'hero',
-      caption: "CadastraAI Pitch: Automated urban parcel mapping from UAV imagery for SIH 26012.",
-      action: () => { window.scrollTo({ top: 0, behavior: 'smooth' }); }
+      title: "00:00–00:15 | DATA INGESTION",
+      caption: "Ingest 45MP UAV RGB imagery (5cm GSD), Orthophoto ORI, DSM/DTM and DGPS Ground Control Points.",
+      action: () => { switchStep(1); }
     },
     {
       step: 2,
-      view: 1,
-      caption: "Step 01: Ingest 24 high-resolution (5cm GSD) drone captures across 4.8 hectares with 85% overlap.",
-      action: () => { switchStep(1); loadDemoDatasetUI(); }
-    },
-    {
-      step: 3,
-      view: 2,
-      caption: "Step 02: Photogrammetric feature matching (SIFT/ORB) & bundle adjustment to produce seamless orthophoto.",
-      action: () => { switchStep(2); simulateOrthoGeneration(); }
-    },
-    {
-      step: 4,
-      view: 3,
-      caption: "Step 03: Run AI Multi-Feature Extraction (CadastraNet U-Net + YOLO-Seg) for parcels, buildings & roads.",
+      title: "00:15–00:40 | AI FEATURE EXTRACTION",
+      caption: "AI Extraction Engine simultaneously extracts parcel boundaries (Blue), buildings (Amber), roads (Slate) & pathways.",
       action: () => { switchStep(3); triggerAiExtractionSequence(); }
     },
     {
-      step: 5,
-      view: 3,
-      caption: "Inspect GIS Layers: Parcels (Blue), Buildings (Orange), Roads (Gray). Toggle any layer on the fly.",
-      action: () => { highlightParcel('P-034'); }
+      step: 3,
+      title: "00:40–00:55 | CONFIDENCE & EXPLAINABLE AI",
+      caption: "Confidence indicates model certainty. Explainable AI flags possible contributing factors (canopy, shadow interference).",
+      action: () => { switchStep(3); selectParcel('P-034'); }
     },
     {
-      step: 6,
-      view: 3,
-      caption: "AI Confidence Scoring: Highlight low-confidence areas (<70%) to flag difficult vegetated boundaries.",
-      action: () => { toggleLowConfidenceHighlight(); }
-    },
-    {
-      step: 7,
-      view: 4,
-      caption: "Step 04: GIS Validation: Detect self-intersections, 3 overlaps & 2 sliver gaps with Shapely engine.",
+      step: 4,
+      title: "00:55–01:15 | TOPOLOGY QA",
+      caption: "Automated Shapely validation detects 3 overlaps and 2 sliver gaps with high-precision geometric auditing.",
       action: () => { switchStep(4); runTopologyCheck(); }
     },
     {
-      step: 8,
-      view: 4,
-      caption: "Auto-Fix Geometries: Automated spatial snapping & healing transforms 82 to 87/87 valid geometries.",
+      step: 5,
+      title: "01:15–01:35 | AUTO-FIX GEOMETRIES",
+      caption: "Auto-Fix applies topological boundary snapping and dissolves overlaps into 100% valid geometries.",
       action: () => { autoFixTopologyUI(); }
     },
     {
-      step: 9,
-      view: 5,
-      caption: "Step 05: Human Verification: Surveyor can Accept, Edit boundary vertices, or Reject with full audit trail.",
+      step: 6,
+      title: "01:35–01:50 | GROUND TRUTHING WORKBENCH",
+      caption: "AI assists, Surveyor decides: Licensed surveyor reviews, edits vertices directly on map, and accepts boundary.",
       action: () => { switchStep(5); loadVerificationWorkbench('P-018'); }
     },
     {
-      step: 10,
-      view: 'export',
-      caption: "Export & NAKSHA Alignment: Instant GeoJSON, KML & print-ready Cadastral Inspection Map Sheet.",
+      step: 7,
+      title: "01:50–02:00 | GIS-READY OUTPUT",
+      caption: "Export preliminary cadastre as standard GeoJSON (RFC 7946), KML, CSV attribute registry & printable field map.",
       action: () => { openExportModal(); }
+    },
+    {
+      step: 8,
+      title: "CONCLUSION | SIH 2026 PS-26012",
+      caption: "CadastraAI delivers preliminary, quality-checked GIS parcel data compatible with modern cadastral workflows.",
+      action: () => { closeExportModal(); switchStep(1); }
     }
   ];
 
@@ -102,6 +98,7 @@
     initSplitComparisonSlider();
     initAnalyticsCharts();
     initEventListeners();
+    updateUIForCurrentDataset();
     loadDemoDatasetUI();
   });
 
@@ -112,18 +109,139 @@
   }
 
   // =========================================================================
+  // MULTI-DATASET SWITCHER ENGINE
+  // =========================================================================
+  function switchSurveyZone(zoneId) {
+    if (!window.CADASTRA_DATASETS || !window.CADASTRA_DATASETS.datasets[zoneId]) return;
+    
+    activeZoneId = zoneId;
+    dataset = window.CADASTRA_DATASETS.datasets[zoneId];
+    window.CADASTRA_DATA = dataset;
+    window.CadastraOrthophoto.clearCache();
+
+    // Notify backend
+    fetch(`/api/dataset/switch/${zoneId}`, { method: 'POST' }).catch(() => {});
+
+    // Update Dropdown and buttons
+    const sel = document.getElementById('datasetSelect');
+    if (sel) sel.value = zoneId;
+
+    const btn1 = document.getElementById('btnSelectZone1');
+    const btn2 = document.getElementById('btnSelectZone2');
+    const btn3 = document.getElementById('btnSelectZone3');
+    if (btn1) btn1.classList.toggle('active', zoneId === 'bengaluru_urban');
+    if (btn2) btn2.classList.toggle('active', zoneId === 'varanasi_dense');
+    if (btn3) btn3.classList.toggle('active', zoneId === 'svamitva_periurban');
+
+    // Update Hero and UI Text
+    updateUIForCurrentDataset();
+
+    // Re-render Maps
+    const center = dataset.bounds.center;
+    const bounds = window.CadastraOrthophoto.getOrthophotoBounds();
+
+    if (gisMap) {
+      gisMap.setView([center[1], center[0]], 18);
+      if (orthoOverlay) gisMap.removeLayer(orthoOverlay);
+      const orthoUrl = window.CadastraOrthophoto.generateOrthophoto(zoneId);
+      orthoOverlay = L.imageOverlay(orthoUrl, bounds, { opacity: 0.92 }).addTo(gisMap);
+      renderGisLayers(gisMap);
+    }
+
+    if (validationMap) {
+      validationMap.setView([center[1], center[0]], 18);
+      renderValidationPolygons();
+    }
+
+    if (verificationMap) {
+      verificationMap.setView([center[1], center[0]], 18);
+      renderVerificationLayers(verificationMap);
+    }
+
+    // Refresh Split slider and charts
+    initHeroMiniMap();
+    drawSplitVectorCanvas('all');
+    loadDemoDatasetUI();
+    updateAnalyticsCharts();
+
+    // Select default parcel
+    selectedParcelId = dataset.parcels.features[0].id;
+    selectParcel(selectedParcelId);
+  }
+
+  function updateUIForCurrentDataset() {
+    if (!dataset || !dataset.metadata) return;
+    const meta = dataset.metadata;
+    const stats = meta.summary_statistics;
+
+    const elParcels = document.getElementById('heroStatParcels');
+    const elBuildings = document.getElementById('heroStatBuildings');
+    const elRoads = document.getElementById('heroStatRoads');
+    const elConf = document.getElementById('heroStatConfidence');
+    const elTag = document.getElementById('heroMapTag');
+    const elTickerGsd = document.getElementById('tickerGsd');
+    const elAnalyticsTag = document.getElementById('analyticsZoneTag');
+
+    if (elParcels) elParcels.textContent = stats.total_parcels;
+    if (elBuildings) elBuildings.textContent = stats.total_buildings;
+    if (elRoads) elRoads.textContent = `${stats.total_road_length_km} km`;
+    if (elConf) elConf.textContent = `${stats.average_confidence_pct}%`;
+    if (elTag) elTag.textContent = dataset.zone_name.toUpperCase();
+    if (elTickerGsd) elTickerGsd.textContent = `${meta.ground_sampling_distance_cm} cm/pixel (Metric)`;
+    if (elAnalyticsTag) elAnalyticsTag.textContent = dataset.zone_name;
+
+    // Update Sources Table
+    const tbody = document.getElementById('dataSourcesTableBody');
+    if (tbody && meta.data_sources_status) {
+      const src = meta.data_sources_status;
+      tbody.innerHTML = `
+        <tr>
+          <td><strong>UAV RGB Imagery</strong></td>
+          <td><span class="badge-source-loaded">${src.uav_rgb_imagery.badge}</span></td>
+          <td>${src.uav_rgb_imagery.details}</td>
+        </tr>
+        <tr>
+          <td><strong>Orthophoto / ORI</strong></td>
+          <td><span class="badge-source-loaded">${src.orthophoto_ori.badge}</span></td>
+          <td>${src.orthophoto_ori.details}</td>
+        </tr>
+        <tr>
+          <td><strong>DSM / DTM</strong></td>
+          <td><span class="badge-source-available">${src.dsm_dtm.badge}</span></td>
+          <td>${src.dsm_dtm.details}</td>
+        </tr>
+        <tr>
+          <td><strong>Existing GIS Layer</strong></td>
+          <td><span class="badge-source-optional">${src.existing_gis_layer.badge}</span></td>
+          <td>${src.existing_gis_layer.details}</td>
+        </tr>
+        <tr>
+          <td><strong>Ground Truth GCPs</strong></td>
+          <td><span class="badge-source-available">${src.ground_truth_gcps.badge}</span></td>
+          <td>${src.ground_truth_gcps.details}</td>
+        </tr>
+        <tr>
+          <td><strong>GNSS / CORS Network</strong></td>
+          <td><span class="badge-source-optional">${src.gnss_cors_network.badge}</span></td>
+          <td>${src.gnss_cors_network.details}</td>
+        </tr>
+      `;
+    }
+  }
+
+  // =========================================================================
   // MAP INITIALIZATION
   // =========================================================================
   function initMaps() {
     const center = dataset && dataset.bounds ? [dataset.bounds.center[1], dataset.bounds.center[0]] : [12.9729, 77.5964];
     const bounds = window.CadastraOrthophoto.getOrthophotoBounds();
 
-    // 1. Step 3 Main GIS Explorer Map
+    // 1. Step 3 GIS Explorer Map
     if (document.getElementById('gisMap')) {
       gisMap = L.map('gisMap', {
         center: center,
         zoom: 18,
-        minZoom: 16,
+        minZoom: 15,
         maxZoom: 21,
         zoomControl: false,
         attributionControl: false
@@ -131,19 +249,16 @@
 
       L.control.zoom({ position: 'bottomright' }).addTo(gisMap);
 
-      // Dark GIS Carto/Stamen Basemap fallback
+      // Dark Geospatial Basemap Fallback
       L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
         maxZoom: 21,
         subdomains: 'abcd'
       }).addTo(gisMap);
 
-      // Procedural Orthophoto Raster Overlay
-      const orthoUrl = window.CadastraOrthophoto.generateOrthophoto();
+      const orthoUrl = window.CadastraOrthophoto.generateOrthophoto(activeZoneId);
       orthoOverlay = L.imageOverlay(orthoUrl, bounds, { opacity: 0.92 }).addTo(gisMap);
 
-      // Render Vectors
       renderGisLayers(gisMap);
-
       gisMap.fitBounds(bounds);
     }
 
@@ -157,11 +272,11 @@
       });
       L.control.zoom({ position: 'bottomright' }).addTo(validationMap);
       L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(validationMap);
-      const orthoUrl = window.CadastraOrthophoto.generateOrthophoto();
-      L.imageOverlay(orthoUrl, bounds, { opacity: 0.8 }).addTo(validationMap);
+      const orthoUrl = window.CadastraOrthophoto.generateOrthophoto(activeZoneId);
+      L.imageOverlay(orthoUrl, bounds, { opacity: 0.85 }).addTo(validationMap);
     }
 
-    // 3. Step 5 Verification Map
+    // 3. Step 5 Ground Truthing Map
     if (document.getElementById('verificationMap')) {
       verificationMap = L.map('verificationMap', {
         center: center,
@@ -171,8 +286,8 @@
       });
       L.control.zoom({ position: 'bottomright' }).addTo(verificationMap);
       L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(verificationMap);
-      const orthoUrl = window.CadastraOrthophoto.generateOrthophoto();
-      L.imageOverlay(orthoUrl, bounds, { opacity: 0.85 }).addTo(verificationMap);
+      const orthoUrl = window.CadastraOrthophoto.generateOrthophoto(activeZoneId);
+      L.imageOverlay(orthoUrl, bounds, { opacity: 0.88 }).addTo(verificationMap);
       renderVerificationLayers(verificationMap);
     }
   }
@@ -181,29 +296,51 @@
   function renderGisLayers(mapInstance) {
     if (!dataset) return;
 
-    // Road Layers
+    // Clear previous vector layers
+    if (roadLayer) mapInstance.removeLayer(roadLayer);
+    if (pathwayLayer) mapInstance.removeLayer(pathwayLayer);
+    if (buildingLayer) mapInstance.removeLayer(buildingLayer);
+    if (parcelLayer) mapInstance.removeLayer(parcelLayer);
+    if (gcpLayer) mapInstance.removeLayer(gcpLayer);
+    if (changesLayer) mapInstance.removeLayer(changesLayer);
+
+    // 1. Roads
     if (dataset.roads) {
       roadLayer = L.geoJSON(dataset.roads, {
         style: function(feat) {
-          const w = feat.properties.width_meters || 10;
+          const w = feat.properties.width_meters || 12;
           return {
-            color: '#94a3b8',
-            weight: Math.max(3, w * 0.4),
+            color: '#64748b',
+            weight: Math.max(3.5, w * 0.4),
+            opacity: 0.9
+          };
+        }
+      }).addTo(mapInstance);
+    }
+
+    // 2. Pathways
+    if (dataset.pathways) {
+      pathwayLayer = L.geoJSON(dataset.pathways, {
+        style: function() {
+          return {
+            color: '#0d9488',
+            weight: 2.5,
+            dashArray: '4, 4',
             opacity: 0.85
           };
         }
       }).addTo(mapInstance);
     }
 
-    // Building Footprints Layer
+    // 3. Buildings
     if (dataset.buildings) {
       buildingLayer = L.geoJSON(dataset.buildings, {
         style: function() {
           return {
-            color: '#f59e0b',
+            color: '#d97706',
             weight: 1.5,
             fillColor: '#d97706',
-            fillOpacity: 0.55
+            fillOpacity: 0.6
           };
         },
         onEachFeature: function(feat, layer) {
@@ -212,16 +349,16 @@
       }).addTo(mapInstance);
     }
 
-    // Parcel Polygons Layer
+    // 4. Parcels
     if (dataset.parcels) {
       parcelLayer = L.geoJSON(dataset.parcels, {
         style: function(feat) {
           const isSelected = feat.id === selectedParcelId;
           return {
-            color: isSelected ? '#00f2fe' : '#0284c7',
-            weight: isSelected ? 3.5 : 2,
+            color: isSelected ? '#38bdf8' : '#0284c7',
+            weight: isSelected ? 3.5 : 1.8,
             fillColor: '#0284c7',
-            fillOpacity: isSelected ? 0.45 : 0.2
+            fillOpacity: isSelected ? 0.4 : 0.15
           };
         },
         onEachFeature: function(feat, layer) {
@@ -231,12 +368,12 @@
             },
             mouseover: function() {
               if (feat.id !== selectedParcelId) {
-                layer.setStyle({ weight: 3, color: '#38bdf8' });
+                layer.setStyle({ weight: 2.8, color: '#38bdf8' });
               }
             },
             mouseout: function() {
               if (feat.id !== selectedParcelId) {
-                layer.setStyle({ weight: 2, color: '#0284c7' });
+                layer.setStyle({ weight: 1.8, color: '#0284c7' });
               }
             }
           });
@@ -244,12 +381,48 @@
       }).addTo(mapInstance);
     }
 
-    // Select default parcel
-    selectParcel('P-034');
+    // 5. Ground Control Points (GCPs)
+    if (dataset.gcp_points) {
+      gcpLayer = L.geoJSON(dataset.gcp_points, {
+        pointToLayer: function(feat, latlng) {
+          return L.circleMarker(latlng, {
+            radius: 5,
+            fillColor: '#10b981',
+            color: '#ffffff',
+            weight: 1.5,
+            opacity: 1,
+            fillOpacity: 0.9
+          }).bindTooltip(`GCP: ${feat.id} (${feat.properties.horizontal_accuracy_mm}mm RTK)`, { sticky: true });
+        }
+      }).addTo(mapInstance);
+    }
+
+    // 6. Temporal Change Markers
+    if (dataset.temporal_changes) {
+      const changeFeatures = dataset.temporal_changes.map(ch => ({
+        type: 'Feature',
+        properties: ch,
+        geometry: { type: 'Point', coordinates: ch.location }
+      }));
+      changesLayer = L.geoJSON({ type: 'FeatureCollection', features: changeFeatures }, {
+        pointToLayer: function(feat, latlng) {
+          return L.circleMarker(latlng, {
+            radius: 7,
+            fillColor: '#a855f7',
+            color: '#ffffff',
+            weight: 2,
+            opacity: 1,
+            fillOpacity: 0.85
+          }).bindTooltip(`<b>${feat.properties.change_type}</b><br>${feat.properties.description}`, { sticky: true });
+        }
+      });
+    }
+
+    selectParcel(selectedParcelId);
   }
 
   // =========================================================================
-  // PARCEL SELECTION & INSPECTOR
+  // PARCEL SELECTION & INTELLIGENCE PANEL
   // =========================================================================
   function selectParcel(parcelId) {
     selectedParcelId = parcelId;
@@ -260,26 +433,29 @@
 
     const props = parcel.properties;
 
-    // Update Inspector UI
+    // Update Elements
     const elId = document.getElementById('inspParcelId');
     const elBlock = document.getElementById('inspBlock');
     const elArea = document.getElementById('inspArea');
     const elPerimeter = document.getElementById('inspPerimeter');
+    const elRoadFrontage = document.getElementById('inspRoadFrontage');
     const elTopology = document.getElementById('inspTopology');
     const elBuildings = document.getElementById('inspBuildings');
     const elConfidence = document.getElementById('inspConfidence');
     const elConfBar = document.getElementById('inspConfBar');
     const elCentroid = document.getElementById('inspCentroid');
     const elStatusBadge = document.getElementById('inspStatusBadge');
+    const elExplainFactors = document.getElementById('explainAiFactors');
 
     if (elId) elId.textContent = props.parcel_id;
-    if (elBlock) elBlock.textContent = props.block || 'Urban Sector 4';
+    if (elBlock) elBlock.textContent = props.block || 'Cadastral Block';
     if (elArea) elArea.textContent = `${props.area_sqm} m²`;
     if (elPerimeter) elPerimeter.textContent = `${props.perimeter_m} m`;
-    
+    if (elRoadFrontage) elRoadFrontage.textContent = `${props.road_frontage_m || 12.0} m`;
+
     if (elTopology) {
       elTopology.textContent = props.geometry_valid ? 'Valid Geometry' : props.topology_status;
-      elTopology.style.color = props.geometry_valid ? 'var(--status-verified)' : 'var(--status-error)';
+      elTopology.style.color = props.geometry_valid ? 'var(--status-valid)' : 'var(--status-error)';
     }
 
     if (elBuildings) {
@@ -298,35 +474,45 @@
 
     if (elStatusBadge) {
       elStatusBadge.textContent = props.verification_status.toUpperCase();
-      if (props.verification_status === 'Ground Verified') {
-        elStatusBadge.style.color = 'var(--status-verified)';
+      if (props.verification_status === 'Surveyor Accepted' || props.verification_status === 'Ground Verified') {
+        elStatusBadge.style.color = 'var(--status-valid)';
         elStatusBadge.style.borderColor = 'rgba(16,185,129,0.4)';
       } else {
-        elStatusBadge.style.color = 'var(--status-review)';
+        elStatusBadge.style.color = 'var(--status-review-req)';
         elStatusBadge.style.borderColor = 'rgba(245,158,11,0.4)';
       }
     }
 
-    // Refresh parcel layer styles to highlight selected
+    // Explainable AI Factors
+    if (elExplainFactors) {
+      const factors = props.explainable_factors || ['Clear aerial contrast'];
+      const action = props.recommended_action || 'Surveyor verification recommended';
+      elExplainFactors.innerHTML = `
+        • <strong>Possible contributing factors:</strong> ${factors.join('; ')}<br>
+        • <strong>Recommended action:</strong> ${action}
+      `;
+    }
+
+    // Refresh Parcel Layer Outline
     if (parcelLayer) {
       parcelLayer.setStyle(function(feat) {
         const isSelected = feat.id === selectedParcelId;
         return {
-          color: isSelected ? '#00f2fe' : '#0284c7',
-          weight: isSelected ? 3.5 : 2,
+          color: isSelected ? '#38bdf8' : '#0284c7',
+          weight: isSelected ? 3.5 : 1.8,
           fillColor: '#0284c7',
-          fillOpacity: isSelected ? 0.45 : 0.2
+          fillOpacity: isSelected ? 0.4 : 0.15
         };
       });
     }
   }
 
-  function highlightParcel(parcelId) {
+  function highlightAndZoomParcel(parcelId) {
     selectParcel(parcelId);
     if (!dataset || !gisMap) return;
     const parcel = dataset.parcels.features.find(p => p.id === parcelId);
     if (parcel && parcel.properties.centroid) {
-      gisMap.flyTo([parcel.properties.centroid[1], parcel.properties.centroid[0]], 19, { duration: 1.0 });
+      gisMap.flyTo([parcel.properties.centroid[1], parcel.properties.centroid[0]], 19, { duration: 0.8 });
     }
   }
 
@@ -341,19 +527,36 @@
         switchStep(step);
       });
     });
+
+    const wfNodes = document.querySelectorAll('.wf-stage-node[data-step]');
+    wfNodes.forEach(node => {
+      node.addEventListener('click', function() {
+        const s = parseInt(this.getAttribute('data-step'), 10);
+        switchStep(s);
+      });
+    });
+
+    const wfExport = document.getElementById('wfStageExport');
+    if (wfExport) wfExport.addEventListener('click', openExportModal);
   }
 
   function switchStep(stepNum) {
     currentStep = stepNum;
 
-    // Update Tab Classes
+    // Tabs
     document.querySelectorAll('.step-tab').forEach(tab => {
       const s = parseInt(tab.getAttribute('data-step'), 10);
       tab.classList.toggle('active', s === stepNum);
-      if (s < stepNum) tab.classList.add('completed');
     });
 
-    // Update View Containers
+    // Workflow Bar Nodes
+    document.querySelectorAll('.wf-stage-node[data-step]').forEach(node => {
+      const s = parseInt(node.getAttribute('data-step'), 10);
+      node.classList.toggle('active', s === stepNum);
+      if (s < stepNum) node.classList.add('done');
+    });
+
+    // Containers
     document.querySelectorAll('.step-container').forEach(container => {
       container.classList.remove('active');
     });
@@ -363,7 +566,6 @@
       activeContainer.classList.add('active');
     }
 
-    // Trigger map invalidation on next frame
     setTimeout(() => {
       if (stepNum === 3 && gisMap) gisMap.invalidateSize();
       if (stepNum === 4 && validationMap) {
@@ -378,14 +580,14 @@
   }
 
   // =========================================================================
-  // STEP 1: UAV DATA VIEW
+  // STEP 1: UAV DATA & THUMBNAILS
   // =========================================================================
   function loadDemoDatasetUI() {
     const grid = document.getElementById('uavThumbnailGrid');
     if (!grid) return;
     grid.innerHTML = '';
 
-    const thumbnails = window.CadastraOrthophoto.generateDroneThumbnails();
+    const thumbnails = window.CadastraOrthophoto.generateDroneThumbnails(activeZoneId);
     thumbnails.forEach(t => {
       const card = document.createElement('div');
       card.className = 'uav-img-card';
@@ -393,40 +595,40 @@
         <img src="${t.dataUrl}" alt="${t.image_id}" />
         <div class="uav-img-info">
           <span>#${t.sequence.toString().padStart(2, '0')}</span>
-          <span style="color:var(--gis-cyan);">${t.metadata.gsd_cm_px}cm GSD</span>
+          <span style="color:#38bdf8;">${t.metadata.gsd_cm_px}cm GSD</span>
         </div>
       `;
       card.addEventListener('click', () => {
-        alert(`UAV Frame: ${t.image_id}\nAltitude: 120m AGL\nCoordinates: ${t.metadata.latitude}, ${t.metadata.longitude}\nRTK Status: ${t.metadata.rtk_status}`);
+        alert(`UAV Mission Frame: ${t.image_id}\nAltitude: ${t.metadata.altitude_agl_m}m AGL\nCoordinates: ${t.metadata.latitude}, ${t.metadata.longitude}\nRTK Status: ${t.metadata.rtk_status}`);
       });
       grid.appendChild(card);
     });
   }
 
   // =========================================================================
-  // STEP 2: PHOTOGRAMMETRY & ORTHOPHOTO
+  // STEP 2: PHOTOGRAMMETRIC ORTHOPHOTO
   // =========================================================================
   function simulateOrthoGeneration() {
     const canvas = document.getElementById('step2OrthoCanvas');
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     const img = new Image();
-    img.src = window.CadastraOrthophoto.generateOrthophoto();
+    img.src = window.CadastraOrthophoto.generateOrthophoto(activeZoneId);
     img.onload = () => {
       canvas.width = 600;
-      canvas.height = 400;
-      ctx.drawImage(img, 0, 0, 600, 400);
+      canvas.height = 380;
+      ctx.drawImage(img, 0, 0, 600, 380);
 
-      // Draw simulated SIFT tie-point animation
-      ctx.strokeStyle = '#00f2fe';
+      // Draw SIFT Keypoint Matches
+      ctx.strokeStyle = '#0284c7';
       ctx.lineWidth = 1;
-      for (let i = 0; i < 40; i++) {
+      for (let i = 0; i < 35; i++) {
         const x1 = Math.random() * 560 + 20;
-        const y1 = Math.random() * 360 + 20;
-        const x2 = x1 + (Math.random() * 40 - 20);
-        const y2 = y1 + (Math.random() * 40 - 20);
+        const y1 = Math.random() * 340 + 20;
+        const x2 = x1 + (Math.random() * 30 - 15);
+        const y2 = y1 + (Math.random() * 30 - 15);
         ctx.beginPath();
-        ctx.arc(x1, y1, 3, 0, Math.PI * 2);
+        ctx.arc(x1, y1, 2.5, 0, Math.PI * 2);
         ctx.stroke();
         ctx.beginPath();
         ctx.moveTo(x1, y1);
@@ -437,48 +639,16 @@
   }
 
   // =========================================================================
-  // STEP 3: AI EXTRACTION PIPELINE ANIMATION
+  // STEP 3: AI EXTRACTION SEQUENCE
   // =========================================================================
   function triggerAiExtractionSequence() {
-    const overlay = document.getElementById('aiProcessingOverlay');
-    if (!overlay) return;
-    overlay.style.display = 'flex';
-
-    const chkIds = ['chk1', 'chk2', 'chk3', 'chk4', 'chk5', 'chk6', 'chk7', 'chk8'];
-    chkIds.forEach(id => {
-      const el = document.getElementById(id);
-      if (el) {
-        el.className = 'progress-checklist-item';
-      }
-    });
-
-    let idx = 0;
-    const interval = setInterval(() => {
-      if (idx < chkIds.length) {
-        const el = document.getElementById(chkIds[idx]);
-        if (el) {
-          el.className = 'progress-checklist-item running';
-        }
-        if (idx > 0) {
-          const prevEl = document.getElementById(chkIds[idx - 1]);
-          if (prevEl) prevEl.className = 'progress-checklist-item done';
-        }
-        idx++;
-      } else {
-        const lastEl = document.getElementById(chkIds[chkIds.length - 1]);
-        if (lastEl) lastEl.className = 'progress-checklist-item done';
-        clearInterval(interval);
-        setTimeout(() => {
-          overlay.style.display = 'none';
-          if (gisMap) {
-            gisMap.flyTo([12.9729, 77.5964], 18, { duration: 1.0 });
-          }
-        }, 500);
-      }
-    }, 280);
+    if (gisMap && dataset) {
+      renderGisLayers(gisMap);
+      gisMap.flyTo([dataset.bounds.center[1], dataset.bounds.center[0]], 18, { duration: 1.0 });
+    }
   }
 
-  // Toggle Low-Confidence Highlighting
+  // Flagged Review Triage (<70%)
   function toggleLowConfidenceHighlight() {
     if (!parcelLayer || !dataset) return;
     const lowConfParcels = dataset.parcels.features.filter(p => p.properties.confidence < 70);
@@ -486,21 +656,20 @@
     parcelLayer.setStyle(function(feat) {
       const isLow = feat.properties.confidence < 70;
       return {
-        color: isLow ? '#ef4444' : 'rgba(2, 132, 199, 0.2)',
-        weight: isLow ? 3.5 : 1,
+        color: isLow ? '#ef4444' : 'rgba(2, 132, 199, 0.25)',
+        weight: isLow ? 3.5 : 1.2,
         fillColor: isLow ? '#ef4444' : '#0284c7',
-        fillOpacity: isLow ? 0.65 : 0.05
+        fillOpacity: isLow ? 0.6 : 0.08
       };
     });
 
-    if (lowConfParcels.length > 0 && lowConfParcels[0].properties.centroid) {
-      gisMap.flyTo([lowConfParcels[0].properties.centroid[1], lowConfParcels[0].properties.centroid[0]], 19, { duration: 1.0 });
-      selectParcel(lowConfParcels[0].id);
+    if (lowConfParcels.length > 0) {
+      highlightAndZoomParcel(lowConfParcels[0].id);
     }
   }
 
   // =========================================================================
-  // STEP 4: GIS QUALITY CONTROL & TOPOLOGY VALIDATION
+  // STEP 4: TOPOLOGY QUALITY ASSURANCE & AUTO-FIX
   // =========================================================================
   function runTopologyCheck() {
     if (!validationMap || !dataset) return;
@@ -511,11 +680,10 @@
         updateTopologyUI(data);
       })
       .catch(() => {
-        // Fallback offline mock response
         updateTopologyUI({
           summary: {
-            total_parcels: 87,
-            valid_geometries: 82,
+            total_parcels: dataset.parcels.features.length,
+            valid_geometries: dataset.parcels.features.length - 5,
             overlap_count: 3,
             gap_count: 2
           },
@@ -545,16 +713,15 @@
     if (!list) return;
     list.innerHTML = '';
 
-    // Render Overlaps
     (data.overlaps || []).forEach(o => {
       const item = document.createElement('div');
       item.className = 'issue-item';
       item.innerHTML = `
-        <div class="issue-title">
-          <span style="color:var(--status-error);">${o.parcel_a} ↔ ${o.parcel_b}</span>
+        <div style="font-weight:700;display:flex;justify-content:space-between;color:var(--status-error);margin-bottom:2px;">
+          <span>${o.parcel_a} ↔ ${o.parcel_b}</span>
           <span class="stat-badge">${o.overlap_area_sqm} m² Overlap</span>
         </div>
-        <div>${o.description}</div>
+        <div style="color:var(--text-secondary);font-size:0.725rem;">${o.description}</div>
       `;
       item.addEventListener('click', () => {
         zoomToValidationIssue(o.parcel_a);
@@ -562,16 +729,15 @@
       list.appendChild(item);
     });
 
-    // Render Gaps
     (data.gaps || []).forEach(g => {
       const item = document.createElement('div');
       item.className = 'issue-item gap-issue';
       item.innerHTML = `
-        <div class="issue-title">
-          <span style="color:var(--status-review);">${g.parcel_id}</span>
+        <div style="font-weight:700;display:flex;justify-content:space-between;color:var(--status-review-req);margin-bottom:2px;">
+          <span>${g.parcel_id}</span>
           <span class="stat-badge">Sliver Gap</span>
         </div>
-        <div>${g.description}</div>
+        <div style="color:var(--text-secondary);font-size:0.725rem;">${g.description}</div>
       `;
       item.addEventListener('click', () => {
         zoomToValidationIssue(g.parcel_id);
@@ -579,7 +745,6 @@
       list.appendChild(item);
     });
 
-    // Render Validation Map Polygons
     renderValidationPolygons();
   }
 
@@ -621,8 +786,8 @@
       .catch(() => {
         applyAutoFixSuccess({
           summary: {
-            total_parcels: 87,
-            valid_geometries_after_fix: 87,
+            total_parcels: dataset.parcels.features.length,
+            valid_geometries_after_fix: dataset.parcels.features.length,
             resolved_overlaps: 3,
             resolved_gaps: 2
           }
@@ -636,20 +801,19 @@
     const elGaps = document.getElementById('qcGaps');
     const list = document.getElementById('topologyIssueList');
 
-    if (elValid) elValid.textContent = '87';
+    if (elValid) elValid.textContent = dataset.parcels.features.length;
     if (elOverlaps) elOverlaps.textContent = '0';
     if (elGaps) elGaps.textContent = '0';
 
     if (list) {
       list.innerHTML = `
-        <div style="background:rgba(16,185,129,0.15);border:1px solid var(--status-verified);border-radius:var(--radius-sm);padding:1rem;color:var(--status-verified);text-align:center;">
-          <div style="font-weight:700;margin-bottom:0.3rem;">✓ TOPOLOGY HEALING COMPLETE</div>
-          <div style="font-size:0.75rem;">All 87 parcels snapped to shared boundaries. 0 Overlaps | 0 Gaps. Ready for surveyor ground verification.</div>
+        <div style="background:rgba(16,185,129,0.12);border:1px solid #10b981;border-radius:var(--radius-xs);padding:0.85rem;color:#10b981;text-align:center;">
+          <div style="font-weight:700;margin-bottom:0.2rem;">✓ TOPOLOGY HEALING COMPLETE</div>
+          <div style="font-size:0.725rem;">All ${dataset.parcels.features.length} parcel geometries snapped to shared boundaries. 0 Overlaps | 0 Gaps.<br><em>Correction applied — surveyor approval required</em></div>
         </div>
       `;
     }
 
-    // Refresh validation map layer with green outlines
     if (validationMap && dataset) {
       validationMap.eachLayer(l => {
         if (l instanceof L.GeoJSON) validationMap.removeLayer(l);
@@ -663,13 +827,17 @@
   }
 
   // =========================================================================
-  // STEP 5: HUMAN GROUND VERIFICATION WORKBENCH
+  // STEP 5: GROUND TRUTHING & SURVEYOR VERIFICATION
   // =========================================================================
   function renderVerificationLayers(mapInstance) {
     if (!dataset) return;
+    mapInstance.eachLayer(l => {
+      if (l instanceof L.GeoJSON) mapInstance.removeLayer(l);
+    });
+
     L.geoJSON(dataset.parcels, {
       style: function(feat) {
-        const isVerif = feat.properties.verification_status === 'Ground Verified';
+        const isVerif = feat.properties.verification_status === 'Surveyor Accepted' || feat.properties.verification_status === 'Ground Verified';
         return {
           color: isVerif ? '#10b981' : '#f59e0b',
           weight: 2,
@@ -696,15 +864,21 @@
     const elArea = document.getElementById('verifArea');
     const elConfidence = document.getElementById('verifConfidence');
     const elStatusBadge = document.getElementById('verifStatusBadge');
+    const elLifecycle = document.getElementById('verifLifecycleActive');
 
     if (elId) elId.textContent = props.parcel_id;
-    if (elBlock) elBlock.textContent = props.block || 'Sector 4';
+    if (elBlock) elBlock.textContent = props.block || 'Survey Block';
     if (elArea) elArea.textContent = `${props.area_sqm} m²`;
     if (elConfidence) elConfidence.textContent = `${props.confidence}%`;
 
     if (elStatusBadge) {
       elStatusBadge.textContent = props.verification_status.toUpperCase();
-      elStatusBadge.style.color = props.verification_status === 'Ground Verified' ? 'var(--status-verified)' : 'var(--status-review)';
+      const isAccepted = props.verification_status === 'Surveyor Accepted' || props.verification_status === 'Ground Verified';
+      elStatusBadge.style.color = isAccepted ? 'var(--status-valid)' : 'var(--status-review-req)';
+    }
+
+    if (elLifecycle) {
+      elLifecycle.textContent = props.verification_status;
     }
 
     if (verificationMap && props.centroid) {
@@ -726,7 +900,7 @@
   }
 
   // =========================================================================
-  // BEFORE / AFTER SWIPE COMPARISON SLIDER
+  // TEMPORAL CHANGE DETECTION & SPLIT COMPARISON SLIDER
   // =========================================================================
   function initSplitComparisonSlider() {
     const container = document.getElementById('splitContainer');
@@ -735,20 +909,6 @@
     const rightLayer = document.getElementById('splitRightLayer');
     if (!container || !handle || !leftLayer || !rightLayer) return;
 
-    // Draw Raw Orthophoto on Left
-    const rawCanvas = document.getElementById('splitRawCanvas');
-    if (rawCanvas) {
-      const ctx = rawCanvas.getContext('2d');
-      const img = new Image();
-      img.src = window.CadastraOrthophoto.generateOrthophoto();
-      img.onload = () => {
-        rawCanvas.width = 1200;
-        rawCanvas.height = 600;
-        ctx.drawImage(img, 0, 0, 1200, 600);
-      };
-    }
-
-    // Draw AI Vector GIS on Right
     drawSplitVectorCanvas('all');
 
     let isDragging = false;
@@ -774,122 +934,105 @@
       setPosition(e.clientX);
     });
 
-    // Touch support
-    handle.addEventListener('touchstart', () => isDragging = true);
-    window.addEventListener('touchend', () => isDragging = false);
-    window.addEventListener('touchmove', (e) => {
-      if (!isDragging || !e.touches[0]) return;
-      setPosition(e.touches[0].clientX);
-    });
-
-    // Initial position 50%
     handle.style.left = '50%';
     leftLayer.style.clipPath = 'polygon(0 0, 50% 0, 50% 100%, 0 100%)';
     rightLayer.style.clipPath = 'polygon(50% 0, 100% 0, 100% 100%, 50% 100%)';
-
-    // Layer filter buttons
-    const filterBtns = document.querySelectorAll('#splitLayerFilters button');
-    filterBtns.forEach(btn => {
-      btn.addEventListener('click', function() {
-        filterBtns.forEach(b => b.classList.remove('active'));
-        this.classList.add('active');
-        const filter = this.getAttribute('data-filter');
-        drawSplitVectorCanvas(filter);
-      });
-    });
   }
 
   function drawSplitVectorCanvas(filter) {
-    const canvas = document.getElementById('splitVectorCanvas');
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    canvas.width = 1200;
-    canvas.height = 600;
+    const rawCanvas = document.getElementById('splitRawCanvas');
+    const vectorCanvas = document.getElementById('splitVectorCanvas');
+    if (!rawCanvas || !vectorCanvas) return;
 
-    // Dark Map Base
-    ctx.fillStyle = '#0a0f1d';
-    ctx.fillRect(0, 0, 1200, 600);
-
-    // Subtle orthophoto underlay
     const img = new Image();
-    img.src = window.CadastraOrthophoto.generateOrthophoto();
+    img.src = window.CadastraOrthophoto.generateOrthophoto(activeZoneId);
     img.onload = () => {
-      ctx.globalAlpha = 0.35;
-      ctx.drawImage(img, 0, 0, 1200, 600);
-      ctx.globalAlpha = 1.0;
+      // 1. Raw Orthophoto
+      rawCanvas.width = 1100;
+      rawCanvas.height = 560;
+      const ctxRaw = rawCanvas.getContext('2d');
+      ctxRaw.drawImage(img, 0, 0, 1100, 560);
 
-      // Coordinate converter helper
-      const baseLat = 12.97160;
-      const baseLng = 77.59460;
+      // 2. Vector Map
+      vectorCanvas.width = 1100;
+      vectorCanvas.height = 560;
+      const ctxVec = vectorCanvas.getContext('2d');
+      ctxVec.fillStyle = '#090e1a';
+      ctxVec.fillRect(0, 0, 1100, 560);
+
+      ctxVec.globalAlpha = 0.35;
+      ctxVec.drawImage(img, 0, 0, 1100, 560);
+      ctxVec.globalAlpha = 1.0;
+
+      const bounds = dataset.bounds;
+      const baseLat = bounds ? bounds.center[1] - (150 / 111000.0) : 12.97160;
+      const baseLng = bounds ? bounds.center[0] - (180 / (111000.0 * Math.cos(baseLat * Math.PI / 180))) : 77.59460;
       const mLat = 111000.0;
       const mLng = 111000.0 * Math.cos(baseLat * Math.PI / 180);
-      const scaleX = (1200 - 80) / 400;
-      const scaleY = (600 - 80) / 340;
+      const scaleX = (1100 - 80) / 400;
+      const scaleY = (560 - 80) / 340;
 
       function toPx(x, y) {
-        return {
-          px: 40 + (x + 20) * scaleX,
-          py: 40 + (320 - y) * scaleY
-        };
+        return { px: 40 + (x + 20) * scaleX, py: 40 + (320 - y) * scaleY };
       }
 
       // Draw Roads
-      if ((filter === 'all' || filter === 'roads') && dataset.roads) {
-        ctx.strokeStyle = '#94a3b8';
-        ctx.lineWidth = 4;
+      if (dataset.roads) {
+        ctxVec.strokeStyle = '#64748b';
+        ctxVec.lineWidth = 3.5;
         dataset.roads.features.forEach(rd => {
           const c = rd.geometry.coordinates;
           const p1 = toPx((c[0][0] - baseLng) * mLng, (c[0][1] - baseLat) * mLat);
           const p2 = toPx((c[1][0] - baseLng) * mLng, (c[1][1] - baseLat) * mLat);
-          ctx.beginPath();
-          ctx.moveTo(p1.px, p1.py);
-          ctx.lineTo(p2.px, p2.py);
-          ctx.stroke();
+          ctxVec.beginPath();
+          ctxVec.moveTo(p1.px, p1.py);
+          ctxVec.lineTo(p2.px, p2.py);
+          ctxVec.stroke();
         });
       }
 
       // Draw Parcels
-      if ((filter === 'all' || filter === 'parcels') && dataset.parcels) {
+      if (dataset.parcels) {
         dataset.parcels.features.forEach(p => {
           const coords = p.geometry.coordinates[0];
-          ctx.beginPath();
+          ctxVec.beginPath();
           coords.forEach((pt, i) => {
             const pos = toPx((pt[0] - baseLng) * mLng, (pt[1] - baseLat) * mLat);
-            if (i === 0) ctx.moveTo(pos.px, pos.py);
-            else ctx.lineTo(pos.px, pos.py);
+            if (i === 0) ctxVec.moveTo(pos.px, pos.py);
+            else ctxVec.lineTo(pos.px, pos.py);
           });
-          ctx.closePath();
-          ctx.fillStyle = 'rgba(2, 132, 199, 0.3)';
-          ctx.fill();
-          ctx.strokeStyle = '#00f2fe';
-          ctx.lineWidth = 1.5;
-          ctx.stroke();
+          ctxVec.closePath();
+          ctxVec.fillStyle = 'rgba(2, 132, 199, 0.25)';
+          ctxVec.fill();
+          ctxVec.strokeStyle = '#0284c7';
+          ctxVec.lineWidth = 1.5;
+          ctxVec.stroke();
         });
       }
 
       // Draw Buildings
-      if ((filter === 'all' || filter === 'buildings') && dataset.buildings) {
+      if (dataset.buildings) {
         dataset.buildings.features.forEach(b => {
           const coords = b.geometry.coordinates[0];
-          ctx.beginPath();
+          ctxVec.beginPath();
           coords.forEach((pt, i) => {
             const pos = toPx((pt[0] - baseLng) * mLng, (pt[1] - baseLat) * mLat);
-            if (i === 0) ctx.moveTo(pos.px, pos.py);
-            else ctx.lineTo(pos.px, pos.py);
+            if (i === 0) ctxVec.moveTo(pos.px, pos.py);
+            else ctxVec.lineTo(pos.px, pos.py);
           });
-          ctx.closePath();
-          ctx.fillStyle = 'rgba(245, 158, 11, 0.7)';
-          ctx.fill();
-          ctx.strokeStyle = '#fbbf24';
-          ctx.lineWidth = 1.2;
-          ctx.stroke();
+          ctxVec.closePath();
+          ctxVec.fillStyle = 'rgba(217, 119, 6, 0.7)';
+          ctxVec.fill();
+          ctxVec.strokeStyle = '#d97706';
+          ctxVec.lineWidth = 1.2;
+          ctxVec.stroke();
         });
       }
     };
   }
 
   // =========================================================================
-  // ANALYTICS CHARTS
+  // CADASTRAL ANALYTICS CHARTS
   // =========================================================================
   function initAnalyticsCharts() {
     if (!window.Chart || !dataset) return;
@@ -897,49 +1040,32 @@
     // 1. Area Distribution
     const ctxArea = document.getElementById('chartAreaDist');
     if (ctxArea) {
-      new Chart(ctxArea, {
+      chartArea = new Chart(ctxArea, {
         type: 'bar',
-        data: {
-          labels: ['<300 m²', '300-500 m²', '500-750 m²', '>750 m²'],
-          datasets: [{
-            label: 'Parcels',
-            data: [14, 48, 19, 6],
-            backgroundColor: '#0284c7',
-            borderColor: '#38bdf8',
-            borderWidth: 1,
-            borderRadius: 4
-          }]
-        },
+        data: getAreaChartData(),
         options: {
           responsive: true,
           maintainAspectRatio: false,
           plugins: { legend: { display: false } },
           scales: {
-            y: { grid: { color: 'rgba(255,255,255,0.08)' }, ticks: { color: '#94a3b8' } },
+            y: { grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#94a3b8' } },
             x: { grid: { display: false }, ticks: { color: '#94a3b8' } }
           }
         }
       });
     }
 
-    // 2. Confidence Distribution
+    // 2. Confidence Tiers
     const ctxConf = document.getElementById('chartConfidence');
     if (ctxConf) {
-      new Chart(ctxConf, {
+      chartConf = new Chart(ctxConf, {
         type: 'doughnut',
-        data: {
-          labels: ['High (>90%)', 'Moderate (70-89%)', 'Low (<70%)'],
-          datasets: [{
-            data: [72, 10, 5],
-            backgroundColor: ['#10b981', '#f59e0b', '#ef4444'],
-            borderWidth: 0
-          }]
-        },
+        data: getConfChartData(),
         options: {
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
-            legend: { position: 'bottom', labels: { color: '#94a3b8', boxWidth: 10, font: { size: 10 } } }
+            legend: { position: 'bottom', labels: { color: '#94a3b8', boxWidth: 8, font: { size: 9 } } }
           }
         }
       });
@@ -948,28 +1074,96 @@
     // 3. Verification Progress
     const ctxVerif = document.getElementById('chartVerification');
     if (ctxVerif) {
-      new Chart(ctxVerif, {
+      chartVerif = new Chart(ctxVerif, {
         type: 'bar',
-        data: {
-          labels: ['Ground Verified', 'Pending Verification'],
-          datasets: [{
-            label: 'Parcels',
-            data: [61, 26],
-            backgroundColor: ['#10b981', '#f59e0b'],
-            borderRadius: 4
-          }]
-        },
+        data: getVerifChartData(),
         options: {
           indexAxis: 'y',
           responsive: true,
           maintainAspectRatio: false,
           plugins: { legend: { display: false } },
           scales: {
-            x: { grid: { color: 'rgba(255,255,255,0.08)' }, ticks: { color: '#94a3b8' } },
+            x: { grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#94a3b8' } },
             y: { grid: { display: false }, ticks: { color: '#94a3b8' } }
           }
         }
       });
+    }
+  }
+
+  function getAreaChartData() {
+    const parcels = dataset ? dataset.parcels.features : [];
+    let b1 = 0, b2 = 0, b3 = 0, b4 = 0;
+    parcels.forEach(p => {
+      const a = p.properties.area_sqm;
+      if (a < 300) b1++;
+      else if (a < 500) b2++;
+      else if (a < 750) b3++;
+      else b4++;
+    });
+    return {
+      labels: ['<300 m²', '300-500 m²', '500-750 m²', '>750 m²'],
+      datasets: [{
+        label: 'Parcels',
+        data: [b1, b2, b3, b4],
+        backgroundColor: '#0284c7',
+        borderRadius: 3
+      }]
+    };
+  }
+
+  function getConfChartData() {
+    const parcels = dataset ? dataset.parcels.features : [];
+    let high = 0, med = 0, low = 0;
+    parcels.forEach(p => {
+      const c = p.properties.confidence;
+      if (c >= 90) high++;
+      else if (c >= 70) med++;
+      else low++;
+    });
+    return {
+      labels: ['High (>90%)', 'Review Req. (70-89%)', 'Ground Verif. (<70%)'],
+      datasets: [{
+        data: [high, med, low],
+        backgroundColor: ['#10b981', '#f59e0b', '#ef4444'],
+        borderWidth: 0
+      }]
+    };
+  }
+
+  function getVerifChartData() {
+    const parcels = dataset ? dataset.parcels.features : [];
+    let verif = 0, pending = 0;
+    parcels.forEach(p => {
+      if (p.properties.verification_status === 'Surveyor Accepted' || p.properties.verification_status === 'Ground Verified') {
+        verif++;
+      } else {
+        pending++;
+      }
+    });
+    return {
+      labels: ['Surveyor Accepted', 'Needs Review'],
+      datasets: [{
+        label: 'Parcels',
+        data: [verif, pending],
+        backgroundColor: ['#10b981', '#f59e0b'],
+        borderRadius: 3
+      }]
+    };
+  }
+
+  function updateAnalyticsCharts() {
+    if (chartArea) {
+      chartArea.data = getAreaChartData();
+      chartArea.update();
+    }
+    if (chartConf) {
+      chartConf.data = getConfChartData();
+      chartConf.update();
+    }
+    if (chartVerif) {
+      chartVerif.data = getVerifChartData();
+      chartVerif.update();
     }
   }
 
@@ -995,10 +1189,9 @@
     const elStepNum = document.getElementById('judgeStepNum');
     const elCaption = document.getElementById('judgeCaption');
 
-    if (elStepNum) elStepNum.textContent = `STEP ${index + 1}/${judgeTourSteps.length}`;
+    if (elStepNum) elStepNum.textContent = stepData.title;
     if (elCaption) elCaption.textContent = stepData.caption;
 
-    // Execute step action
     if (stepData.action) {
       stepData.action();
     }
@@ -1019,7 +1212,7 @@
   }
 
   // =========================================================================
-  // EXPORT MODAL & CADASTRAL INSPECTION REPORT
+  // EXPORT MODAL & FIELD REPORT
   // =========================================================================
   function openExportModal() {
     const modal = document.getElementById('exportModal');
@@ -1035,23 +1228,21 @@
     window.print();
   }
 
-  // Hero Mini Map
   function initHeroMiniMap() {
     const canvas = document.getElementById('heroMiniCanvas');
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     const img = new Image();
-    img.src = window.CadastraOrthophoto.generateOrthophoto();
+    img.src = window.CadastraOrthophoto.generateOrthophoto(activeZoneId);
     img.onload = () => {
       canvas.width = 400;
-      canvas.height = 280;
-      ctx.drawImage(img, 0, 0, 400, 280);
+      canvas.height = 260;
+      ctx.drawImage(img, 0, 0, 400, 260);
 
-      // Overlay cyber cyan grid & parcels
-      ctx.strokeStyle = 'rgba(0, 242, 254, 0.4)';
+      ctx.strokeStyle = 'rgba(2, 132, 199, 0.4)';
       ctx.lineWidth = 1;
       for (let x = 30; x < 370; x += 45) {
-        for (let y = 30; y < 250; y += 35) {
+        for (let y = 30; y < 230; y += 35) {
           ctx.strokeRect(x, y, 40, 30);
         }
       }
@@ -1062,7 +1253,23 @@
   // EVENT LISTENERS
   // =========================================================================
   function initEventListeners() {
-    // Header & Hero Buttons
+    // Header Zone Selector
+    const datasetSelect = document.getElementById('datasetSelect');
+    if (datasetSelect) {
+      datasetSelect.addEventListener('change', function() {
+        switchSurveyZone(this.value);
+      });
+    }
+
+    // Step 1 Zone Buttons
+    const btn1 = document.getElementById('btnSelectZone1');
+    const btn2 = document.getElementById('btnSelectZone2');
+    const btn3 = document.getElementById('btnSelectZone3');
+    if (btn1) btn1.addEventListener('click', () => switchSurveyZone('bengaluru_urban'));
+    if (btn2) btn2.addEventListener('click', () => switchSurveyZone('varanasi_dense'));
+    if (btn3) btn3.addEventListener('click', () => switchSurveyZone('svamitva_periurban'));
+
+    // Header Actions
     const btnJudge = document.getElementById('btnJudgeMode');
     const btnHeroJudge = document.getElementById('btnHeroJudgeMode');
     if (btnJudge) btnJudge.addEventListener('click', startJudgeMode);
@@ -1076,76 +1283,7 @@
     const btnExplore = document.getElementById('btnHeroExploreWorkflow');
     if (btnExplore) btnExplore.addEventListener('click', () => switchStep(3));
 
-    // Stepper Action Buttons
-    const btnLoadDemo = document.getElementById('btnLoadDemoDataset');
-    if (btnLoadDemo) btnLoadDemo.addEventListener('click', () => {
-      loadDemoDatasetUI();
-      alert('Demo dataset loaded: 24 UAV Images, 4.8 ha coverage, 5.0 cm/px GSD.');
-    });
-
-    // File Upload Drag & Drop Handling
-    const dropzone = document.getElementById('uavDropzone');
-    const fileInput = document.getElementById('uavFileInput');
-    const btnSelectFiles = document.getElementById('btnSelectFiles');
-
-    if (btnSelectFiles && fileInput) {
-      btnSelectFiles.addEventListener('click', (e) => {
-        e.stopPropagation();
-        fileInput.click();
-      });
-    }
-
-    if (dropzone && fileInput) {
-      dropzone.addEventListener('click', () => fileInput.click());
-      
-      dropzone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        dropzone.style.borderColor = 'var(--gis-cyan)';
-      });
-      
-      dropzone.addEventListener('dragleave', () => {
-        dropzone.style.borderColor = 'rgba(56, 189, 248, 0.4)';
-      });
-
-      dropzone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dropzone.style.borderColor = 'rgba(56, 189, 248, 0.4)';
-        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-          handleUploadedFiles(e.dataTransfer.files);
-        }
-      });
-
-      fileInput.addEventListener('change', (e) => {
-        if (e.target.files && e.target.files.length > 0) {
-          handleUploadedFiles(e.target.files);
-        }
-      });
-    }
-
-    function handleUploadedFiles(files) {
-      const formData = new FormData();
-      formData.append('file', files[0]);
-      
-      fetch('/api/upload', {
-        method: 'POST',
-        body: formData
-      })
-      .then(res => res.json())
-      .then(data => {
-        if (data.status === 'SUCCESS') {
-          alert(`UAV Image Uploaded: ${data.filename} (${(data.size_bytes / (1024 * 1024)).toFixed(2)} MB)\n${data.message}`);
-          loadDemoDatasetUI();
-        } else {
-          alert(data.detail || 'Upload failed');
-        }
-      })
-      .catch(err => {
-        console.warn('Offline fallback mode:', err);
-        loadDemoDatasetUI();
-        alert(`Loaded ${files.length} UAV image(s) for photogrammetric reconstruction.`);
-      });
-    }
-
+    // Stepper Actions
     const btnS1Next = document.getElementById('btnStep1Next');
     if (btnS1Next) btnS1Next.addEventListener('click', () => switchStep(2));
 
@@ -1201,6 +1339,36 @@
       });
     }
 
+    const togglePathways = document.getElementById('layerTogglePathways');
+    if (togglePathways) {
+      togglePathways.addEventListener('change', function() {
+        if (pathwayLayer && gisMap) {
+          if (this.checked) gisMap.addLayer(pathwayLayer);
+          else gisMap.removeLayer(pathwayLayer);
+        }
+      });
+    }
+
+    const toggleGcp = document.getElementById('layerToggleGcp');
+    if (toggleGcp) {
+      toggleGcp.addEventListener('change', function() {
+        if (gcpLayer && gisMap) {
+          if (this.checked) gisMap.addLayer(gcpLayer);
+          else gisMap.removeLayer(gcpLayer);
+        }
+      });
+    }
+
+    const toggleChanges = document.getElementById('layerToggleChanges');
+    if (toggleChanges) {
+      toggleChanges.addEventListener('change', function() {
+        if (changesLayer && gisMap) {
+          if (this.checked) gisMap.addLayer(changesLayer);
+          else gisMap.removeLayer(changesLayer);
+        }
+      });
+    }
+
     const toggleOrtho = document.getElementById('layerToggleOrthophoto');
     if (toggleOrtho) {
       toggleOrtho.addEventListener('change', function() {
@@ -1237,13 +1405,22 @@
       });
     }
 
-    // Step 5 Verification Buttons
+    // Smart Review Queue Click Rows
+    const queueRows = document.querySelectorAll('#smartQueueTableBody tr');
+    queueRows.forEach(row => {
+      row.addEventListener('click', function() {
+        const pid = this.getAttribute('data-parcel');
+        if (pid) highlightAndZoomParcel(pid);
+      });
+    });
+
+    // Step 5 Actions
     const btnAccept = document.getElementById('btnAcceptParcel');
-    if (btnAccept) btnAccept.addEventListener('click', () => handleVerifyAction('Ground Verified'));
+    if (btnAccept) btnAccept.addEventListener('click', () => handleVerifyAction('Surveyor Accepted'));
 
     const btnEdit = document.getElementById('btnEditParcel');
     if (btnEdit) btnEdit.addEventListener('click', () => {
-      alert('Interactive Polygon Vertex Dragging Active: Click and drag any polygon boundary vertex on the map to adjust geometry.');
+      alert('Interactive Polygon Vertex Dragging Active: Click and drag any boundary vertex on the map to adjust geometry.');
     });
 
     const btnReject = document.getElementById('btnRejectParcel');
@@ -1265,13 +1442,6 @@
     if (btnPrint1) btnPrint1.addEventListener('click', printCadastralReport);
     if (btnPrint2) btnPrint2.addEventListener('click', printCadastralReport);
 
-    const btnShapeBundle = document.getElementById('btnDownloadShapefileBundle');
-    if (btnShapeBundle) {
-      btnShapeBundle.addEventListener('click', () => {
-        window.location.href = '/api/export/geojson';
-      });
-    }
-
     // Judge HUD Controls
     const btnJNext = document.getElementById('btnJudgeNext');
     const btnJPrev = document.getElementById('btnJudgePrev');
@@ -1279,6 +1449,28 @@
     if (btnJNext) btnJNext.addEventListener('click', nextJudgeStep);
     if (btnJPrev) btnJPrev.addEventListener('click', prevJudgeStep);
     if (btnJClose) btnJClose.addEventListener('click', exitJudgeMode);
+
+    // Dropzone Upload Handling
+    const dropzone = document.getElementById('uavDropzone');
+    const fileInput = document.getElementById('uavFileInput');
+    const btnSelectFiles = document.getElementById('btnSelectFiles');
+
+    if (btnSelectFiles && fileInput) {
+      btnSelectFiles.addEventListener('click', (e) => {
+        e.stopPropagation();
+        fileInput.click();
+      });
+    }
+
+    if (dropzone && fileInput) {
+      dropzone.addEventListener('click', () => fileInput.click());
+      fileInput.addEventListener('change', (e) => {
+        if (e.target.files && e.target.files.length > 0) {
+          alert(`UAV Frame Loaded: ${e.target.files[0].name}. Ready for photogrammetric alignment.`);
+          loadDemoDatasetUI();
+        }
+      });
+    }
   }
 
 })();

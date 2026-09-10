@@ -1,8 +1,10 @@
 """
 CadastraAI FastAPI Application Server (Production Ready)
-SIH Problem Statement 26012: AI-Based Automated Urban Parcel Mapping & Cadastral Feature Extraction
+SIH 2026 Problem Statement PS-26012: AI-Based Automated Urban Parcel Mapping & Cadastral Feature Extraction
 """
 import os
+import io
+import csv
 import json
 import math
 import copy
@@ -11,7 +13,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File, status
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import shapely
@@ -19,7 +21,8 @@ from shapely.geometry import Polygon, MultiPolygon, LineString, Point, shape, ma
 
 # Base Project Paths
 BASE_DIR = Path(__file__).resolve().parent
-DATA_PATH = BASE_DIR / "cadastra_dataset.json"
+DATASETS_PATH = BASE_DIR / "cadastra_datasets.json"
+FALLBACK_DATA_PATH = BASE_DIR / "cadastra_dataset.json"
 STATIC_DIR = BASE_DIR / "static"
 
 # Environment Variables
@@ -34,9 +37,9 @@ else:
     ALLOWED_ORIGINS = [orig.strip() for orig in CORS_ORIGINS_RAW.split(",") if orig.strip()]
 
 app = FastAPI(
-    title="CadastraAI Core Engine",
-    description="AI-Based Automated Urban Parcel Mapping & Cadastral Feature Extraction Server",
-    version="2.5.0",
+    title="CadastraAI Enterprise GIS Engine",
+    description="AI-Based Automated Urban Parcel Mapping & Cadastral Feature Extraction Server (SIH 2026 | PS-26012)",
+    version="3.0.0-SIH2026",
     docs_url="/docs" if ENV != "production_secure" else None,
     redoc_url="/redoc" if ENV != "production_secure" else None
 )
@@ -49,60 +52,80 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory working database initialized from dataset
+# Multi-dataset memory store
+all_datasets_store = {}
+active_zone_id = "bengaluru_urban"
+
 working_state = {
+    "zone_id": "bengaluru_urban",
+    "zone_name": "Sector 4 Urban Expansion Zone",
     "parcels": [],
     "buildings": [],
     "roads": [],
+    "pathways": [],
+    "gcp_points": [],
+    "gnss_stations": [],
+    "temporal_changes": [],
     "uav_images": [],
     "metadata": {},
-    "bounds": {},
-    "topology_audit": []
+    "bounds": {}
 }
 
-def load_data():
-    if DATA_PATH.exists():
+def load_all_datasets():
+    global all_datasets_store, active_zone_id
+    if DATASETS_PATH.exists():
         try:
-            with open(DATA_PATH, "r", encoding="utf-8") as f:
+            with open(DATASETS_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                working_state["parcels"] = copy.deepcopy(data["parcels"]["features"])
-                working_state["buildings"] = copy.deepcopy(data["buildings"]["features"])
-                working_state["roads"] = copy.deepcopy(data["roads"]["features"])
-                working_state["uav_images"] = copy.deepcopy(data.get("uav_images", []))
-                working_state["metadata"] = copy.deepcopy(data["metadata"])
-                working_state["bounds"] = copy.deepcopy(data["bounds"])
-                working_state["topology_audit"] = []
+                all_datasets_store = data.get("datasets", {})
+                active_zone_id = data.get("active_dataset_id", "bengaluru_urban")
         except Exception as e:
-            print(f"Warning: Error loading dataset from {DATA_PATH}: {e}")
-            init_fallback_dataset()
-    else:
-        init_fallback_dataset()
+            print(f"Warning: Error loading multi-datasets: {e}")
+            all_datasets_store = {}
 
-def init_fallback_dataset():
-    """Emergency minimal fallback dataset if json file is missing."""
-    working_state["parcels"] = []
-    working_state["buildings"] = []
-    working_state["roads"] = []
-    working_state["uav_images"] = []
-    working_state["metadata"] = {
-        "dataset_name": "CadastraAI Fallback Dataset",
-        "total_parcels": 0,
-        "responsible_ai_disclaimer": "AI-generated boundaries are preliminary and do NOT determine legal land ownership."
-    }
-    working_state["bounds"] = {"center": [77.5946, 12.9716]}
+    if not all_datasets_store and FALLBACK_DATA_PATH.exists():
+        try:
+            with open(FALLBACK_DATA_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                all_datasets_store["bengaluru_urban"] = data
+                active_zone_id = "bengaluru_urban"
+        except Exception as e:
+            print(f"Warning: Fallback loading failed: {e}")
 
-load_data()
+    activate_dataset(active_zone_id)
 
-BASE_LAT = 12.97160
-BASE_LNG = 77.59460
-METERS_PER_DEG_LAT = 111000.0
-METERS_PER_DEG_LNG = 111000.0 * math.cos(math.radians(BASE_LAT))
+def activate_dataset(zone_id: str):
+    global active_zone_id
+    if zone_id not in all_datasets_store:
+        if all_datasets_store:
+            zone_id = list(all_datasets_store.keys())[0]
+        else:
+            return
 
-def calculate_shapely_area_perimeter(poly: Polygon):
+    active_zone_id = zone_id
+    ds = all_datasets_store[zone_id]
+    working_state["zone_id"] = ds.get("zone_id", zone_id)
+    working_state["zone_name"] = ds.get("zone_name", "Survey Zone")
+    working_state["parcels"] = copy.deepcopy(ds.get("parcels", {}).get("features", []))
+    working_state["buildings"] = copy.deepcopy(ds.get("buildings", {}).get("features", []))
+    working_state["roads"] = copy.deepcopy(ds.get("roads", {}).get("features", []))
+    working_state["pathways"] = copy.deepcopy(ds.get("pathways", {}).get("features", []))
+    working_state["gcp_points"] = copy.deepcopy(ds.get("gcp_points", {}).get("features", []))
+    working_state["gnss_stations"] = copy.deepcopy(ds.get("gnss_stations", []))
+    working_state["temporal_changes"] = copy.deepcopy(ds.get("temporal_changes", []))
+    working_state["uav_images"] = copy.deepcopy(ds.get("uav_images", []))
+    working_state["metadata"] = copy.deepcopy(ds.get("metadata", {}))
+    working_state["bounds"] = copy.deepcopy(ds.get("bounds", {}))
+
+load_all_datasets()
+
+def calculate_shapely_area_perimeter(poly: Polygon, base_lat=12.9716, base_lng=77.5946):
     """Calculate metric area (sqm) and perimeter (m) from WGS84 degree coords."""
     coords = list(poly.exterior.coords)
+    m_lat = 111000.0
+    m_lng = 111000.0 * math.cos(math.radians(base_lat))
     local_pts = [
-        ((lng - BASE_LNG) * METERS_PER_DEG_LNG, (lat - BASE_LAT) * METERS_PER_DEG_LAT)
+        ((lng - base_lng) * m_lng, (lat - base_lat) * m_lat)
         for lng, lat in coords
     ]
     n = len(local_pts) - 1
@@ -126,21 +149,59 @@ class VerifyRequest(BaseModel):
 
 class UpdateGeometryRequest(BaseModel):
     parcel_id: str
-    coordinates: List[List[List[float]]] # GeoJSON Polygon coordinates
+    coordinates: List[List[List[float]]]
 
 @app.get("/api/health")
 def health_check():
     """Liveness probe for cloud deployments."""
     return {
         "status": "healthy",
+        "sih_edition": "Smart India Hackathon 2026",
+        "problem_statement": "SIH26012",
+        "project": "CadastraAI",
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "environment": ENV
+    }
+
+@app.get("/api/datasets")
+def list_available_datasets():
+    """Returns list of selectable demonstration survey zones."""
+    dataset_summaries = []
+    for zid, ds in all_datasets_store.items():
+        meta = ds.get("metadata", {})
+        stats = meta.get("summary_statistics", {})
+        dataset_summaries.append({
+            "zone_id": zid,
+            "zone_name": ds.get("zone_name", zid),
+            "location": ds.get("location", ""),
+            "coverage_hectares": meta.get("coverage_area_hectares", 4.8),
+            "total_parcels": stats.get("total_parcels", len(ds.get("parcels", {}).get("features", []))),
+            "total_buildings": stats.get("total_buildings", len(ds.get("buildings", {}).get("features", []))),
+            "gsd_cm": meta.get("ground_sampling_distance_cm", 5.0),
+            "is_active": (zid == active_zone_id)
+        })
+    return {
+        "active_zone_id": active_zone_id,
+        "datasets": dataset_summaries
+    }
+
+@app.post("/api/dataset/switch/{zone_id}")
+def switch_active_dataset(zone_id: str):
+    """Switch the current active survey zone."""
+    if zone_id not in all_datasets_store:
+        raise HTTPException(status_code=404, detail=f"Survey dataset '{zone_id}' not found.")
+    activate_dataset(zone_id)
+    return {
+        "status": "SUCCESS",
+        "active_zone_id": active_zone_id,
+        "zone_name": working_state["zone_name"],
+        "message": f"Switched to '{working_state['zone_name']}' successfully."
     }
 
 @app.get("/api/status")
 def get_system_status():
     try:
-        verified_count = sum(1 for p in working_state["parcels"] if p["properties"]["verification_status"] == "Ground Verified")
+        verified_count = sum(1 for p in working_state["parcels"] if p["properties"]["verification_status"] in ["Surveyor Accepted", "Ground Verified"])
         pending_count = len(working_state["parcels"]) - verified_count
         avg_conf = 91.4
         if working_state["parcels"]:
@@ -148,26 +209,43 @@ def get_system_status():
 
         return {
             "status": "ONLINE",
-            "service": "CadastraAI Geospatial AI Engine",
-            "version": "2.5.0-PROD",
+            "service": "CadastraAI Geospatial AI Extraction Engine",
+            "version": "3.0.0-SIH2026",
+            "sih_problem_statement": "SIH26012",
+            "active_zone": working_state["zone_name"],
             "environment": ENV,
             "timestamp": datetime.utcnow().isoformat() + "Z",
-            "ai_segmentation_models": [
-                {"name": "CadastraNet-UrbSeg-v3 (U-Net + ResNet-101 Backbone)", "status": "Ready", "accuracy_mIoU": "89.4%"},
-                {"name": "BuildingFootprint-YOLOSeg-v8x", "status": "Ready", "accuracy_mIoU": "92.1%"},
-                {"name": "RoadCorridor-DeepLabV3+", "status": "Ready", "accuracy_mIoU": "94.6%"}
+            "ai_extraction_engine": [
+                {
+                    "component": "AI Feature Segmentation Engine",
+                    "architecture": "Convolutional Feature Extraction (U-Net Backbone) + Multi-task Vectorization",
+                    "status": "Operational",
+                    "evaluation_note": "Demo estimate (Illustrative result)"
+                },
+                {
+                    "component": "Building Footprint Detector",
+                    "architecture": "Multi-scale Spatial Segmentation & Polygon Boundary Tracing",
+                    "status": "Operational",
+                    "evaluation_note": "Demo estimate (Illustrative result)"
+                },
+                {
+                    "component": "Road & Access Corridor Linear Extractor",
+                    "architecture": "Centerline Tracing & Right-of-Way Width Analysis",
+                    "status": "Operational",
+                    "evaluation_note": "Demo estimate (Illustrative result)"
+                }
             ],
-            "photogrammetry_engine": "OpenSfM / Metashape-Bridge (RTK-GNSS 5cm GSD)",
-            "topology_engine": "Shapely 2.0 + GEOS 3.12 (Automated Snapping & Healing)",
+            "photogrammetry_pipeline": "OpenSfM / RTK-GNSS Metric Bundle Adjustment (5.0 cm/px GSD)",
+            "topology_validation_engine": "Shapely 2.0 + GEOS 3.12 (Automated Boundary Healing)",
             "stats": {
                 "total_parcels": len(working_state["parcels"]),
                 "total_buildings": len(working_state["buildings"]),
-                "total_roads_km": 3.6,
+                "total_roads_km": round(sum(r["properties"]["length_meters"] for r in working_state["roads"]) / 1000.0, 1) if working_state["roads"] else 3.6,
                 "avg_confidence_pct": avg_conf,
                 "ground_verified": verified_count,
                 "pending_verification": pending_count
             },
-            "disclaimer": "AI-generated parcel boundaries are preliminary and do NOT determine legal land ownership."
+            "disclaimer": "AI-generated parcel boundaries are preliminary and do NOT determine legal land ownership. Ground verification and official cadastral procedures are mandatory."
         }
     except Exception as e:
         return JSONResponse(
@@ -178,6 +256,8 @@ def get_system_status():
 @app.get("/api/dataset/demo")
 def get_demo_dataset():
     return {
+        "zone_id": working_state["zone_id"],
+        "zone_name": working_state["zone_name"],
         "metadata": working_state["metadata"],
         "bounds": working_state["bounds"],
         "uav_images": working_state["uav_images"],
@@ -192,19 +272,29 @@ def get_demo_dataset():
         "roads": {
             "type": "FeatureCollection",
             "features": working_state["roads"]
-        }
+        },
+        "pathways": {
+            "type": "FeatureCollection",
+            "features": working_state["pathways"]
+        },
+        "gcp_points": {
+            "type": "FeatureCollection",
+            "features": working_state["gcp_points"]
+        },
+        "gnss_stations": working_state["gnss_stations"],
+        "temporal_changes": working_state["temporal_changes"]
     }
 
 @app.post("/api/dataset/reset")
 def reset_dataset():
-    load_data()
-    return {"status": "SUCCESS", "message": "Dataset reset to factory initial demonstration state."}
+    activate_dataset(active_zone_id)
+    return {"status": "SUCCESS", "message": f"Dataset '{working_state['zone_name']}' reset to factory state."}
 
 @app.post("/api/upload")
 async def upload_drone_imagery(file: UploadFile = File(...)):
     """Safe upload endpoint for UAV drone imagery with validation."""
     ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
-    MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+    MAX_FILE_SIZE = 50 * 1024 * 1024
     
     filename = file.filename or "uav_image.jpg"
     ext = Path(filename).suffix.lower()
@@ -244,6 +334,9 @@ def run_topology_check():
     try:
         parcels = working_state["parcels"]
         shapely_polys = []
+        center = working_state.get("bounds", {}).get("center", [77.5946, 12.9716])
+        base_lat = center[1]
+        base_lng = center[0]
         
         for p in parcels:
             coords = p["geometry"]["coordinates"][0]
@@ -257,7 +350,6 @@ def run_topology_check():
         gaps = []
         invalid_geoms = []
         
-        # Pairwise overlap detection
         n = len(shapely_polys)
         for i in range(n):
             id_a, poly_a, feat_a = shapely_polys[i]
@@ -269,7 +361,7 @@ def run_topology_check():
                 if poly_a.intersects(poly_b):
                     inter = poly_a.intersection(poly_b)
                     if isinstance(inter, (Polygon, MultiPolygon)) and inter.area > 1e-11:
-                        area_sqm, _ = calculate_shapely_area_perimeter(inter) if isinstance(inter, Polygon) else (round(inter.area * METERS_PER_DEG_LAT * METERS_PER_DEG_LNG, 1), 0)
+                        area_sqm, _ = calculate_shapely_area_perimeter(inter, base_lat, base_lng) if isinstance(inter, Polygon) else (round(inter.area * 111000.0 * 111000.0, 1), 0)
                         overlaps.append({
                             "parcel_a": id_a,
                             "parcel_b": id_b,
@@ -278,14 +370,13 @@ def run_topology_check():
                             "description": f"Overlapping boundary detected between {id_a} and {id_b} ({area_sqm} m²)."
                         })
         
-        # Gap detection around specific flagged test polygons
         for p in parcels:
             if p["properties"].get("topology_status") == "Sliver Gap Anomaly":
                 gaps.append({
                     "parcel_id": p["id"],
                     "gap_type": "Boundary Sliver Discontinuity",
                     "width_m": 1.2,
-                    "description": f"Unenclosed 1.2m sliver gap along eastern boundary of {p['id']}."
+                    "description": f"Unenclosed 1.2m sliver gap along boundary of {p['id']}."
                 })
         
         unique_overlap_parcels = set()
@@ -293,15 +384,15 @@ def run_topology_check():
             unique_overlap_parcels.add(o["parcel_a"])
             unique_overlap_parcels.add(o["parcel_b"])
         
-        valid_count = len(parcels) - len(unique_overlap_parcels) - (2 if gaps else 0)
-        if valid_count < 0: valid_count = 82
+        valid_count = len(parcels) - len(unique_overlap_parcels) - (len(gaps))
+        if valid_count < 0: valid_count = len(parcels) - 5
         
         return {
             "status": "COMPLETED",
             "timestamp": datetime.utcnow().isoformat() + "Z",
             "summary": {
                 "total_parcels": len(parcels),
-                "valid_geometries": 82 if overlaps or gaps else len(parcels),
+                "valid_geometries": valid_count if overlaps or gaps else len(parcels),
                 "overlap_count": len(overlaps),
                 "gap_count": len(gaps),
                 "self_intersection_count": len(invalid_geoms),
@@ -324,6 +415,9 @@ def auto_fix_topology():
     """Heal overlaps, snap sliver boundaries and ensure 100% valid topology."""
     try:
         fixes_applied = []
+        center = working_state.get("bounds", {}).get("center", [77.5946, 12.9716])
+        base_lat = center[1]
+        base_lng = center[0]
         
         for p in working_state["parcels"]:
             pid = p["id"]
@@ -335,11 +429,12 @@ def auto_fix_topology():
                 
                 p["geometry"]["coordinates"] = [cleaned_coords]
                 poly = Polygon(cleaned_coords)
-                area, perim = calculate_shapely_area_perimeter(poly)
+                area, perim = calculate_shapely_area_perimeter(poly, base_lat, base_lng)
                 p["properties"]["area_sqm"] = area
                 p["properties"]["perimeter_m"] = perim
                 p["properties"]["geometry_valid"] = True
                 p["properties"]["topology_status"] = "Valid (Auto-Healed)"
+                p["properties"]["review_priority"] = "Low"
                 fixes_applied.append({
                     "parcel_id": pid,
                     "action": "Boundary Snapping & Overlap Dissolved",
@@ -357,7 +452,7 @@ def auto_fix_topology():
             "summary": {
                 "total_parcels": len(working_state["parcels"]),
                 "valid_geometries_after_fix": len(working_state["parcels"]),
-                "resolved_overlaps": 3,
+                "resolved_overlaps": len(fixes_applied),
                 "resolved_gaps": 2,
                 "topology_health": "100.0% Valid (Ready for Ground Verification)"
             },
@@ -400,14 +495,17 @@ def verify_parcel(req: VerifyRequest):
 @app.post("/api/parcels/update-geometry")
 def update_parcel_geometry(req: UpdateGeometryRequest):
     try:
+        center = working_state.get("bounds", {}).get("center", [77.5946, 12.9716])
+        base_lat = center[1]
+        base_lng = center[0]
         for p in working_state["parcels"]:
             if p["id"] == req.parcel_id:
                 p["geometry"]["coordinates"] = req.coordinates
                 poly = Polygon(req.coordinates[0])
-                area, perim = calculate_shapely_area_perimeter(poly)
+                area, perim = calculate_shapely_area_perimeter(poly, base_lat, base_lng)
                 p["properties"]["area_sqm"] = area
                 p["properties"]["perimeter_m"] = perim
-                p["properties"]["verification_status"] = "Ground Verified (Manually Edited)"
+                p["properties"]["verification_status"] = "Surveyor Edited"
                 p["properties"]["geometry_valid"] = True
                 p["properties"]["topology_status"] = "Valid (Surveyor Edited)"
                 return {
@@ -435,7 +533,8 @@ def export_geojson():
                 }
             },
             "metadata": {
-                "generator": "CadastraAI v2.5.0 (SIH 26012 Automated Cadastral Engine)",
+                "generator": "CadastraAI v3.0.0 (SIH 2026 PS-26012 Engine)",
+                "zone_name": working_state["zone_name"],
                 "exported_at": datetime.utcnow().isoformat() + "Z",
                 "total_parcels": len(working_state["parcels"]),
                 "responsible_ai_disclaimer": "AI-generated preliminary parcel boundaries. Ownership is NOT determined by CadastraAI."
@@ -444,7 +543,7 @@ def export_geojson():
         }
         return JSONResponse(
             content=fc,
-            headers={"Content-Disposition": "attachment; filename=cadastra_parcels_export.geojson"}
+            headers={"Content-Disposition": f"attachment; filename=cadastra_{working_state['zone_id']}_parcels.geojson"}
         )
     except Exception as e:
         return JSONResponse(
@@ -460,8 +559,8 @@ def export_kml():
             '<?xml version="1.0" encoding="UTF-8"?>',
             '<kml xmlns="http://www.opengis.net/kml/2.2">',
             '  <Document>',
-            '    <name>CadastraAI Preliminary Cadastral Boundaries</name>',
-            '    <description>SIH 26012 AI-Derived Preliminary Parcel Map. Ownership not determined.</description>',
+            f'    <name>CadastraAI Preliminary Cadastral Boundaries ({working_state["zone_name"]})</name>',
+            '    <description>SIH 2026 PS-26012 AI-Derived Preliminary Parcel Map. Ownership not determined.</description>',
             '    <Style id="verifiedStyle">',
             '      <LineStyle><color>ff00aa00</color><width>2.5</width></LineStyle>',
             '      <PolyStyle><color>4400ff00</color></PolyStyle>',
@@ -478,7 +577,7 @@ def export_kml():
             area = props["area_sqm"]
             conf = props["confidence"]
             status_val = props["verification_status"]
-            style = "#verifiedStyle" if status_val == "Ground Verified" else "#pendingStyle"
+            style = "#verifiedStyle" if status_val in ["Surveyor Accepted", "Ground Verified"] else "#pendingStyle"
             
             coords = p["geometry"]["coordinates"][0]
             kml_coord_str = " ".join([f"{pt[0]},{pt[1]},0" for pt in coords])
@@ -512,12 +611,58 @@ def export_kml():
         return Response(
             content=kml_content,
             media_type="application/vnd.google-earth.kml+xml",
-            headers={"Content-Disposition": "attachment; filename=cadastra_parcels_export.kml"}
+            headers={"Content-Disposition": f"attachment; filename=cadastra_{working_state['zone_id']}_parcels.kml"}
         )
     except Exception as e:
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"status": "ERROR", "message": f"KML export failed: {str(e)}"}
+        )
+
+@app.get("/api/export/csv")
+def export_csv_attributes():
+    """Export tabular cadastral attribute registry as CSV."""
+    try:
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow([
+            "parcel_id", "survey_zone", "block", "area_sqm", "perimeter_m",
+            "extraction_confidence_pct", "confidence_tier", "verification_status",
+            "topology_status", "buildings_count", "road_frontage_m",
+            "review_priority", "centroid_latitude", "centroid_longitude", "disclaimer"
+        ])
+        
+        for p in working_state["parcels"]:
+            props = p["properties"]
+            centroid = props.get("centroid", [0, 0])
+            writer.writerow([
+                props.get("parcel_id", ""),
+                working_state["zone_name"],
+                props.get("block", ""),
+                props.get("area_sqm", 0),
+                props.get("perimeter_m", 0),
+                props.get("confidence", 0),
+                props.get("confidence_tier", ""),
+                props.get("verification_status", ""),
+                props.get("topology_status", ""),
+                props.get("extracted_features", {}).get("buildings_count", 0),
+                props.get("road_frontage_m", 0),
+                props.get("review_priority", ""),
+                centroid[1] if len(centroid) > 1 else 0,
+                centroid[0] if len(centroid) > 0 else 0,
+                "Preliminary GIS boundary. Ownership not determined."
+            ])
+        
+        csv_data = output.getvalue()
+        return Response(
+            content=csv_data,
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=cadastra_{working_state['zone_id']}_attributes.csv"}
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"status": "ERROR", "message": f"CSV export failed: {str(e)}"}
         )
 
 # Static file serving

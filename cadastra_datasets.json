@@ -1,8 +1,4 @@
-/**
- * CadastraAI Master Multi-Dataset Geospatial Payload
- * Pre-packaged survey zones for SIH 2026 PS-26012
- */
-window.CADASTRA_DATASETS = {
+{
   "active_dataset_id": "bengaluru_urban",
   "datasets": {
     "bengaluru_urban": {
@@ -40487,5 +40483,4 @@ window.CADASTRA_DATASETS = {
       }
     }
   }
-};
-window.CADASTRA_DATA = window.CADASTRA_DATASETS.datasets['bengaluru_urban'];
+}
