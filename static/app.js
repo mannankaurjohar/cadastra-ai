@@ -132,7 +132,7 @@
       L.control.zoom({ position: 'bottomright' }).addTo(gisMap);
 
       // Dark GIS Carto/Stamen Basemap fallback
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
         maxZoom: 21,
         subdomains: 'abcd'
       }).addTo(gisMap);
@@ -156,7 +156,7 @@
         attributionControl: false
       });
       L.control.zoom({ position: 'bottomright' }).addTo(validationMap);
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(validationMap);
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(validationMap);
       const orthoUrl = window.CadastraOrthophoto.generateOrthophoto();
       L.imageOverlay(orthoUrl, bounds, { opacity: 0.8 }).addTo(validationMap);
     }
@@ -170,7 +170,7 @@
         attributionControl: false
       });
       L.control.zoom({ position: 'bottomright' }).addTo(verificationMap);
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(verificationMap);
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(verificationMap);
       const orthoUrl = window.CadastraOrthophoto.generateOrthophoto();
       L.imageOverlay(orthoUrl, bounds, { opacity: 0.85 }).addTo(verificationMap);
       renderVerificationLayers(verificationMap);
